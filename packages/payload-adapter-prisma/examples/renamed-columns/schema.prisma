@@ -1,0 +1,30 @@
+// A schema written years before anyone mentioned a CMS.
+//
+// The table is snake_case, the model is not, the column that holds the article
+// text is called `content`, and a trigger keeps `view_count` up to date. All of
+// this is normal, and none of it is going to change because a CMS arrived.
+
+model BlogPost {
+  id          String    @id @default(cuid())
+  title       String
+  slug        String    @unique
+  /// The CMS wants to call this `body`.
+  content     String?
+  /// Maintained by a trigger. Nothing else may write it.
+  viewCount   Int       @default(0) @map("view_count")
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  /// Prisma maintains this one.
+  updatedAt   DateTime  @updatedAt
+
+  @@map("blog_posts")
+}
+
+// No timestamp columns at all, which is the other common shape.
+model Author {
+  id    String @id @default(cuid())
+  name  String
+  email String @unique
+
+  @@map("authors")
+}

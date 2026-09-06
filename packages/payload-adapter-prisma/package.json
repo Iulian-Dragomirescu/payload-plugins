@@ -1,0 +1,54 @@
+{
+  "name": "payload-adapter-prisma",
+  "version": "0.1.0",
+  "description": "Payload CMS database adapter for an existing Prisma schema. Payload keeps its own state in a second database, yours stays exactly as Prisma wrote it.",
+  "keywords": [
+    "payload",
+    "payload-cms",
+    "payload-plugin",
+    "database-adapter",
+    "prisma",
+    "postgres"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Iulian-Dragomirescu/payload-plugins",
+    "directory": "packages/payload-adapter-prisma"
+  },
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "payload": "catalog:peers"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "payload": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,127 @@
+// An ordinary Prisma schema. Nothing here is Payload's.
+//
+// This is the point of the whole project: you write your schema the way you
+// would without a CMS — your names, your types, your relations, your `@@map`s —
+// and Payload's collections are mapped onto it. There is no CMS migration, no
+// generated table, no prefix anywhere below.
+//
+// `src/collections/*.ts` is where each collection names the model it maps onto,
+// and `src/payload.config.ts` is where the adapter is wired up.
+
+// Prisma 7: the ESM `prisma-client` generator, with an explicit output path.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7: the datasource block declares the provider only. The connection
+// URL moved to `prisma.config.ts`, which is also where the adapter reads it from.
+datasource db {
+  provider = "postgresql"
+}
+
+/// Deliberately named `BlogPost`, not `Post`, and mapped to a snake_case table.
+/// The CMS calls this collection `posts` — see `db: { model: "BlogPost" }`.
+model BlogPost {
+  id          String    @id @default(cuid())
+  title       String
+  slug        String    @unique
+  /// The CMS calls this field `body`. The column keeps the name the schema
+  /// already used.
+  content     String?
+  views       Int       @default(0)
+  featured    Boolean   @default(false)
+  /// A column YOU added, because you wanted a Payload plugin that stores a
+  /// nested object. `@payloadcms/plugin-seo` adds a `meta` group field; a group
+  /// is one value, so it maps to one `Json` column. Adding it was your choice
+  /// and your migration — the adapter never writes DDL.
+  meta        Json?
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  /// To-one, owning side: this row holds the foreign key.
+  author   Author @relation("PostAuthor", fields: [authorId], references: [id])
+  authorId String
+
+  /// A SECOND relation to the same model. This is why `db.foreignKey` exists —
+  /// the relation name alone cannot tell `author` and `reviewer` apart.
+  reviewer   Author? @relation("PostReviewer", fields: [reviewerId], references: [id])
+  reviewerId String?
+
+  /// Implicit many-to-many. Prisma manages the join table; the adapter writes it
+  /// with `connect` on create and `set` on update.
+  tags Tag[] @relation("PostToTag")
+
+  /// Self-relation, so depth expansion has a cycle to terminate on.
+  parent   BlogPost?  @relation("PostHierarchy", fields: [parentId], references: [id])
+  parentId String?
+  children BlogPost[] @relation("PostHierarchy")
+
+  @@index([authorId])
+  @@index([publishedAt])
+  @@map("blog_posts")
+}
+
+model Author {
+  id             String  @id @default(cuid())
+  name           String
+  email          String  @unique
+  role           String?
+  organizationId String?
+
+  /// To-many, NON-owning side: `BlogPost` holds the key, so this side can only
+  /// be written through the nested form.
+  posts     BlogPost[] @relation("PostAuthor")
+  reviewing BlogPost[] @relation("PostReviewer")
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@map("authors")
+}
+
+model Tag {
+  id    Int    @id @default(autoincrement())
+  label String @unique
+
+  posts BlogPost[] @relation("PostToTag")
+
+  @@map("tags")
+}
+
+model Organization {
+  id   String @id @default(cuid())
+  name String
+
+  members Author[]
+
+  @@map("organizations")
+}
+
+/// A GLOBAL's table.
+///
+/// A global is a singleton and a table is not, so something has to say which
+/// row the global is. The rule is the plainest one: the first row, by primary
+/// key. Read it; if the table is empty, the first save creates it — so this
+/// table never needs seeding, and starts working the moment it exists.
+///
+/// Nothing here is the CMS's. No discriminator column, no prefix, no marker
+/// row. It is an ordinary table that happens to hold one row.
+model SiteSetting {
+  id           String @id @default(cuid())
+  title        String @default("Payload on Prisma")
+  tagline      String?
+  postsPerPage Int    @default(10)
+
+  @@map("site_settings")
+}
+
+/// The model `defineAccess` resolves callers against.
+model User {
+  id    String  @id @default(cuid())
+  name  String
+  email String  @unique
+  roles String?
+
+  @@map("users")
+}

@@ -1,0 +1,63 @@
+# Two databases, because this setup uses two for two different jobs.
+#
+#   postgres  — YOUR data. `schema.prisma` describes it and Prisma owns every
+#               table in it. Payload reads and writes these tables through
+#               `payload-adapter-prisma` and creates none of its own.
+#
+#   mongo     — PAYLOAD's own state: admin logins and their password hashes,
+#               globals, editor preferences, document locks, versions, drafts,
+#               migrations. None of it belongs in a domain schema, so none of it
+#               goes there. A separate engine makes that boundary impossible to
+#               blur by accident.
+#
+# Prefer one engine? Swap `mongooseAdapter` for `@payloadcms/db-postgres`
+# pointed at a second database. The split is the same; the internal side just
+# uses tables instead of collections.
+#
+#   docker compose up -d          # start both
+#   docker compose down -v        # stop and delete the volumes
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: payload-blog-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: payload
+      POSTGRES_PASSWORD: payload
+      POSTGRES_DB: payload_blog
+    ports:
+      # 5433 on the host, so an existing local Postgres on 5432 keeps working.
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `prisma migrate` fails confusingly against a server that is listening
+      # but not yet accepting queries, so wait for a real readiness answer.
+      test: ["CMD-SHELL", "pg_isready -U payload -d payload_blog"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mongo:
+    image: mongo:8
+    container_name: payload-blog-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: payload
+      MONGO_INITDB_ROOT_PASSWORD: payload
+      MONGO_INITDB_DATABASE: payload_internal
+    ports:
+      # 27018 on the host, for the same reason Postgres uses 5433.
+      - "27018:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
+  mongo-data:

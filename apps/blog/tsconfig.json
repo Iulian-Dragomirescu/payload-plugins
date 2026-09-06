@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "jsx": "preserve",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "react"],
+    "noEmit": true,
+    "allowJs": true,
+    "incremental": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    // Consume the workspace packages through their built output, the same way
+    // an installed copy would resolve.
+    "customConditions": [],
+    "paths": {
+      // Payload's own convention: every route file imports the config from
+      // here, and `withPayload` sets up the same alias for the bundler.
+      "@payload-config": ["./src/payload.config.ts"]
+    },
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["src/**/*", "next-env.d.ts", ".next/types/**/*.ts", "*.ts"],
+  "exclude": ["node_modules", "src/generated"]
+}

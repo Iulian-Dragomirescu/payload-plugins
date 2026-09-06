@@ -1,0 +1,2 @@
+# Most ignores live in the repo root .gitignore. These are specific to this app.
+next-env.d.ts

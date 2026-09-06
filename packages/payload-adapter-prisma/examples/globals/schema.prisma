@@ -1,0 +1,25 @@
+// Two ways to back a global with a table, and one way not to.
+
+/// One table, one global. The adapter reads the first row by primary key, and
+/// the first save creates it, so this table never needs seeding.
+///
+/// Nothing here belongs to the CMS. No discriminator column, no prefix, no
+/// marker row. It is an ordinary table that happens to hold one row.
+model SiteSetting {
+  id           String  @id @default(cuid())
+  title        String  @default("My site")
+  tagline      String?
+  postsPerPage Int     @default(10)
+
+  @@map("site_settings")
+}
+
+/// One table, several globals, told apart by a key column. This is the common
+/// shape when a project already has a settings table.
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value Json
+
+  @@map("settings")
+}

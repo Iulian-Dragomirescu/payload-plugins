@@ -1,0 +1,39 @@
+packages:
+  - apps/*
+  - packages/*
+
+catalog:
+  # Payload, installed rather than forked. One version across the workspace, so
+  # there is exactly one `payload` instance and its types compare equal.
+  payload: 3.88.0
+  "@payloadcms/db-mongodb": 3.88.0
+  "@payloadcms/next": 3.88.0
+  "@payloadcms/richtext-lexical": 3.88.0
+  "@payloadcms/ui": 3.88.0
+  "@payloadcms/plugin-seo": 3.88.0
+  graphql: 16.14.2
+
+  # Prisma, which owns your schema.
+  prisma: 7.10.0
+  "@prisma/client": 7.10.0
+  "@prisma/adapter-pg": 7.10.0
+
+  next: 16.3.3
+  react: 19.2.7
+  react-dom: 19.2.7
+  "@types/react": 19.2.17
+  "@types/react-dom": 19.2.3
+
+  "@types/node": 22.10.2
+  "@types/pg": 8.11.10
+  cross-env: 7.0.3
+  dotenv: 16.4.7
+  pg: 8.13.1
+  tsup: 8.5.0
+  tsx: 4.19.2
+  typescript: 5.7.2
+  vitest: 2.1.8
+
+catalogs:
+  peers:
+    payload: ">=3.88.0 <4"

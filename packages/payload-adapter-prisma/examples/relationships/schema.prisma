@@ -1,0 +1,47 @@
+// Every relation shape a CMS runs into, in one model.
+
+model BlogPost {
+  id    String @id @default(cuid())
+  title String
+
+  /// To-one, owning side. This row holds the foreign key.
+  author   Author @relation("PostAuthor", fields: [authorId], references: [id])
+  authorId String
+
+  /// A SECOND relation to the SAME model. Prisma tells the two apart by their
+  /// foreign keys, which is why `foreignKey` exists in the config.
+  reviewer   Author? @relation("PostReviewer", fields: [reviewerId], references: [id])
+  reviewerId String?
+
+  /// Implicit many-to-many. Prisma owns the join table.
+  tags Tag[] @relation("PostToTag")
+
+  /// Self-relation, where a naive mapper loops forever.
+  parent   BlogPost?  @relation("PostHierarchy", fields: [parentId], references: [id])
+  parentId String?
+  children BlogPost[] @relation("PostHierarchy")
+
+  @@map("blog_posts")
+}
+
+model Author {
+  id   String @id @default(cuid())
+  name String
+
+  /// To-many, NON-owning side. `BlogPost` holds the key, so this side has no
+  /// column to write and can only be read.
+  posts     BlogPost[] @relation("PostAuthor")
+  reviewing BlogPost[] @relation("PostReviewer")
+
+  @@map("authors")
+}
+
+model Tag {
+  /// An Int primary key, not a string. Ids are coerced at the boundary.
+  id    Int    @id @default(autoincrement())
+  label String @unique
+
+  posts BlogPost[] @relation("PostToTag")
+
+  @@map("tags")
+}

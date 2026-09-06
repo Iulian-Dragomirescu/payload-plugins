@@ -1,0 +1,41 @@
+{
+  "name": "payload-plugins",
+  "private": true,
+  "description": "Payload CMS packages: a Prisma database adapter, and room for more",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/*\" build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --filter \"./packages/*\" test",
+    "dev": "pnpm --filter @repo/blog dev",
+    "clean": "pnpm -r exec rm -rf dist node_modules .next && rm -rf node_modules",
+    "release": "multi-semantic-release --ignore-private-packages",
+    "release:dry": "multi-semantic-release --ignore-private-packages --dry-run"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "6.0.3",
+    "@semantic-release/git": "10.0.1",
+    "@semantic-release/github": "11.0.1",
+    "@semantic-release/npm": "12.0.1",
+    "multi-semantic-release": "3.1.0",
+    "semantic-release": "24.2.3",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@10.13.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma",
+      "sharp"
+    ],
+    "overrides": {
+      "graphql": "16.14.2"
+    }
+  }
+}

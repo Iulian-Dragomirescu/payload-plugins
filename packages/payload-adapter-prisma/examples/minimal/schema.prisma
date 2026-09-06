@@ -1,0 +1,13 @@
+// The friendly case: names in the schema already match what the CMS wants.
+//
+// Nothing here was written for a CMS. It just happens to line up, which is what
+// makes it the right place to start.
+
+model Article {
+  id        String   @id @default(cuid())
+  title     String
+  body      String?
+  published Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

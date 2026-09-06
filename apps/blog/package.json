@@ -1,0 +1,51 @@
+{
+  "name": "@repo/blog",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Runnable Payload app on an ordinary Prisma schema, used as the adapter's demo and integration suite",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down -v",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate",
+    "db:studio": "prisma studio",
+    "setup": "pnpm db:up && pnpm db:push && pnpm db:generate && pnpm payload:importmap",
+    "payload": "cross-env NODE_OPTIONS=--no-deprecation payload",
+    "payload:importmap": "payload generate:importmap",
+    "seed": "tsx src/seed.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@payloadcms/db-mongodb": "catalog:",
+    "@payloadcms/next": "catalog:",
+    "@payloadcms/richtext-lexical": "catalog:",
+    "@payloadcms/ui": "catalog:",
+    "payload-adapter-prisma": "workspace:*",
+    "@prisma/adapter-pg": "catalog:",
+    "@prisma/client": "catalog:",
+    "dotenv": "catalog:",
+    "graphql": "catalog:",
+    "next": "catalog:",
+    "payload": "catalog:",
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "@payloadcms/plugin-seo": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "cross-env": "catalog:",
+    "prisma": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

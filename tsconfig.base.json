@@ -1,0 +1,23 @@
+{
+  "//": "Shared compiler behaviour, extended by every workspace with a relative path. Deliberately carries no `outDir`, `rootDir`, `include` or `exclude`: a relative path in an extended config resolves against THIS file, so layout keys here would point at the repo root from every workspace that forgot to override them. Layout is each project's own business.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "customConditions": ["source"],
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}
