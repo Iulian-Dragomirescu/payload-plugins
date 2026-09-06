@@ -28,6 +28,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # `src/generated/` is gitignored, and the blog imports the client from
+      # there. `prisma generate` reads the schema only, so no database yet.
+      - name: Generate the Prisma client
+        run: pnpm --filter @repo/blog db:generate
+
       - name: Typecheck
         run: pnpm typecheck
 
