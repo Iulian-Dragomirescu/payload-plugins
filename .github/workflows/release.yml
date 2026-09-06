@@ -1,28 +1,58 @@
 name: Release
 
+# A tag is the release. `pnpm release` writes the version, tags the commit and
+# pushes; nothing here decides what to publish.
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "*@*"
 
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
   id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
 
 jobs:
   release:
-    name: Release
+    name: ${{ github.ref_name }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # semantic-release reads the whole history to work out the last
-          # released tag for each package.
+          # Release notes are the commit range between this tag and the
+          # previous one for the same package.
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Read the tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          name="${TAG%@*}"
+          version="${TAG##*@}"
+
+          # A prerelease goes to a dist-tag named after its preid, never to
+          # latest, or `npm i pkg` starts handing out beta builds.
+          if [[ "$version" == *-* ]]; then
+            preid="${version#*-}"
+            dist_tag="${preid%%.*}"
+            prerelease=true
+          else
+            dist_tag=latest
+            prerelease=false
+          fi
+
+          {
+            echo "name=$name"
+            echo "version=$version"
+            echo "dist_tag=$dist_tag"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -32,14 +62,101 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing exchanges the workflow's OIDC token for a short
+      # lived npm token, and only npm 11.5.1 and up knows how to do it.
+      - name: Use an npm that can publish
+        run: npm install --global npm@latest
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build publishable packages
-        run: pnpm -r --filter "./packages/*" build
-
-      - name: Release
+      - name: Locate the package
+        id: pkg
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm release
+          NAME: ${{ steps.tag.outputs.name }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          dir=$(pnpm ls --recursive --depth -1 --json \
+            | jq -r --arg n "$NAME" '.[] | select(.name == $n) | .path')
+
+          if [ -z "$dir" ]; then
+            echo "::error::No workspace package named $NAME. The tag must be <package name>@<version>."
+            exit 1
+          fi
+
+          manifest=$(jq -r .version "$dir/package.json")
+          if [ "$manifest" != "$VERSION" ]; then
+            echo "::error::Tag says $VERSION, $dir/package.json says $manifest. Tag the release commit, not the one before it."
+            exit 1
+          fi
+
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::$NAME@$VERSION is already on npm. Versions are immutable, cut a new one."
+            exit 1
+          fi
+
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: pnpm --filter "...${{ steps.tag.outputs.name }}" build
+
+      - name: Typecheck
+        run: pnpm --filter "${{ steps.tag.outputs.name }}" typecheck
+
+      - name: Unit tests
+        run: pnpm --filter "${{ steps.tag.outputs.name }}" test
+
+      # pnpm resolves the catalog: and workspace: protocols into real ranges
+      # while packing. npm publish on the source directory would ship them
+      # verbatim and every install would fail.
+      - name: Pack
+        id: pack
+        env:
+          NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          pnpm --filter "$NAME" pack --pack-destination "$RUNNER_TEMP"
+          tarball=$(find "$RUNNER_TEMP" -maxdepth 1 -name '*.tgz' | head -1)
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        run: |
+          npm publish "${{ steps.pack.outputs.tarball }}" \
+            --provenance \
+            --access public \
+            --tag "${{ steps.tag.outputs.dist_tag }}"
+
+      - name: Release notes
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+          NAME: ${{ steps.tag.outputs.name }}
+          DIR: ${{ steps.pkg.outputs.dir }}
+        run: |
+          set -euo pipefail
+          # Chronological, because tags are created in release order and a
+          # version sort puts 1.0.0-beta.1 in the wrong place.
+          previous=$(git tag --list "$NAME@*" --sort=-creatordate \
+            | grep -Fxv "$TAG" | head -1 || true)
+
+          {
+            git log "${previous:+$previous..}$TAG" --format='- %s (%h)' -- "$DIR"
+            if [ -n "$previous" ]; then
+              echo
+              echo "**Full changelog**: ${{ github.server_url }}/${{ github.repository }}/compare/$previous...$TAG"
+            fi
+          } > "$RUNNER_TEMP/notes.md"
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --verify-tag \
+            --title "${{ steps.tag.outputs.name }} ${{ steps.tag.outputs.version }}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            ${{ steps.tag.outputs.prerelease == 'true' && '--prerelease' || '--latest' }} \
+            "${{ steps.pack.outputs.tarball }}"

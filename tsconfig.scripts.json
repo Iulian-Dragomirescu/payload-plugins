@@ -1,0 +1,9 @@
+{
+  "//": "The release script only. It runs through tsx and emits nothing, but the moment a version is being written is the wrong moment to find out a type was wrong.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*"]
+}

@@ -11,7 +11,7 @@ one: a database adapter that runs Payload on an existing Prisma schema.
 | Language | TypeScript, ESM everywhere (`"type": "module"`) |
 | Bundler | tsup for packages, Next.js for the app |
 | Tests | Vitest |
-| Releases | multi-semantic-release, per package, from `main` |
+| Releases | one git tag per release, cut by `pnpm release` |
 | Linter | none yet, see [Open choices](#open-choices) |
 
 There is no Turborepo. With one package and one app, `pnpm -r` is the whole
@@ -53,6 +53,8 @@ pnpm --filter @repo/blog setup    # docker compose up, db push, prisma generate,
 pnpm dev                          # the blog app on http://localhost:3000/admin
 pnpm --filter @repo/blog seed     # an admin login, content, and a narrated tour
 pnpm --filter @repo/blog test     # integration tests against real Postgres and MongoDB
+
+pnpm release            # cut a release, see Releases
 ```
 
 The integration suite needs the containers in `apps/blog/docker-compose.yml`.
@@ -117,49 +119,70 @@ before changing the assertion.
 
 ## Releases
 
-Automated by multi-semantic-release from `main`. Each package releases
-independently, and **which files a commit touched decides which package is
-released**, not the commit scope.
+**A tag is the release.** Pushing `<package name>@<version>` runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which
+publishes that one package. Nothing else publishes, and no branch does.
 
-Packages are discovered from `pnpm-workspace.yaml`, not from a `workspaces`
-field in `package.json`. multi-semantic-release reads it through
-`@manypkg/get-packages`, which understands pnpm. There is nothing to list in the
-root manifest, and adding a `workspaces` field there would be a second, silent
-source of truth. Check it any time with:
+Tags are cut by `scripts/release.ts`, never by hand:
 
 ```bash
-pnpm release:dry
+pnpm release              # pick a package, a channel and a bump, then push
+pnpm release --dry-run    # print every step, change nothing
+pnpm release --bump preminor --preid beta --yes
 ```
 
-It prints the packages it found and which ones it skipped as private.
+It refuses to start on a dirty tree, a detached HEAD, or a branch behind its
+upstream, reads the current version from the git tags rather than from
+`package.json`, reads the conventional commits that touched the package to
+suggest a bump, then writes the version, commits, tags and pushes atomically.
+The suggestion is a suggestion: the commit type says what changed, only a
+person knows whether it is worth a minor.
 
-| Commit type | Bump |
-| --- | --- |
-| `fix:` | patch |
-| `feat:` | minor |
-| `feat!:` or `BREAKING CHANGE:` | major |
-| `docs:`, `refactor:`, `perf:` | patch |
-| `chore:` | no release |
+| Version | npm dist-tag | Installed by |
+| --- | --- | --- |
+| `0.4.1` | `latest` | `npm i payload-adapter-prisma` |
+| `0.5.0-beta.2` | `beta` | `npm i payload-adapter-prisma@beta` |
+| `0.5.0-rc.1` | `rc` | `npm i payload-adapter-prisma@rc` |
 
-Private packages (`@repo/*`) are skipped by `--ignore-private-packages`.
+The dist-tag is the prerelease identifier, so a prerelease can never land on
+`latest` and cannot reach anyone who did not ask for it. A prerelease line
+graduates by tagging the same version without the identifier.
 
-Two things must be true before the first release works:
+Under `0.x` a breaking change is a minor. Leaving `0.x` is a deliberate act,
+never a side effect of a commit message, so the script proposes `minor` for a
+breaking change until the major is `1` or higher.
 
-1. `repository.url` in `packages/payload-adapter-prisma/package.json` matches the
-   git remote exactly. semantic-release fails with a git error otherwise.
-2. npm Trusted Publishing is configured for the package, pointing at this repo,
-   the `Release` workflow, and branch `main`. `provenance: true` signs the
-   artifact but does not authenticate the publish, so without a trusted
-   publisher the release fails with `ENONPMTOKEN`.
+Things about the workflow that look wrong but are not:
 
-Never hand-edit a `version` field. semantic-release owns it.
+- **It packs with pnpm and publishes with npm.** `pnpm pack` resolves the
+  `catalog:` and `workspace:` protocols into real ranges; `npm publish` on the
+  source directory would ship `catalog:peers` verbatim and every install would
+  fail. npm does the upload because pnpm 10.13 has no `--provenance`, and
+  Trusted Publishing needs npm 11.5.1 or newer, hence the global npm install.
+- **It builds, typechecks and tests before publishing.** A tag can be pushed
+  from any commit. CI having passed on `main` is not proof this commit is the
+  one that passed.
+- **It refuses a tag whose version disagrees with `package.json`,** which is
+  what tagging the commit before the release commit looks like.
+
+Before the first release, npm Trusted Publishing must be configured for the
+package, pointing at this repo and the `Release` workflow. `--provenance` signs
+the artifact but does not authenticate the publish, so without a trusted
+publisher the release fails with `ENONPMTOKEN`. If the trusted publisher is
+restricted to a branch, tag pushes will not match it: restrict by GitHub
+Environment instead, or not at all.
+
+There is no `CHANGELOG.md`. The GitHub release carries the commits for that
+package's directory in the range since its previous tag.
 
 ## Adding a package
 
 1. Create `packages/<name>/` with a `package.json` carrying `"private": false`
    and `"publishConfig": { "access": "public" }`.
 2. Set `repository.url` to this repo and `repository.directory` to its path.
-3. Give it `build`, `typecheck` and `test` scripts so the root scripts pick it up.
+3. Give it `build`, `typecheck` and `test` scripts. The root scripts pick them
+   up, and so does the release workflow, which runs all three before it
+   publishes.
 4. Add a `README.md`, and a page under `docs/` if it needs more than a page.
 
 pnpm workspaces discover it. Nothing else needs editing.
