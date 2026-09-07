@@ -1,4 +1,4 @@
-import type { ModelMapping } from "../mapping/types.js";
+import type { ArrayFieldMapping, ModelMapping } from "../mapping/types.js";
 
 /** A row as the Prisma client returned it. */
 export type PrismaRow = Record<string, unknown>;
@@ -129,6 +129,12 @@ export function toPayloadDoc(props: {
   const { row, mapping } = props;
   const doc: Record<string, unknown> = {};
 
+  for (const [path, array] of mapping.arrays) {
+    const rows = row[array.prismaField];
+    if (!Array.isArray(rows)) continue;
+    doc[path] = rows.map((entry) => toPayloadDoc({ row: entry as PrismaRow, mapping: array.target }));
+  }
+
   for (const [path, field] of mapping.fields) {
     if (field.kind === "scalar") {
       if (!(field.prismaField in row)) continue;
@@ -168,12 +174,75 @@ export function toPayloadDoc(props: {
 }
 
 /**
- * Builds the `include` a read needs to return every mapped relation.
+ * Builds the `select` for rows read as part of another document.
+ *
+ * An array's child rows come back whole rather than as ids, so every mapped
+ * column has to be named. `select` rather than a bare `true`, so a column the
+ * config does not declare stays out of the document, which is the rule
+ * {@link toPayloadDoc} already keeps for a collection.
+ *
+ * @param props - Input props.
+ * @param props.mapping - The mapping of the rows being read.
+ * @returns The `select` object.
+ */
+function buildSelect(props: { mapping: ModelMapping }): Record<string, unknown> {
+  const { mapping } = props;
+  const select: Record<string, unknown> = { [mapping.idField.name]: true };
+
+  for (const field of mapping.fields.values()) {
+    if (field.kind === "scalar") {
+      select[field.prismaField] = true;
+      continue;
+    }
+    // A to-one this row owns reads off its foreign-key column, which costs no
+    // join.
+    if (field.ownsForeignKey && !field.isList && field.foreignKey !== undefined) {
+      select[field.foreignKey] = true;
+      continue;
+    }
+    select[field.prismaField] = {
+      select: { [field.targetIdField.name]: true },
+      ...(field.orderBy !== undefined ? { orderBy: field.orderBy } : {}),
+    };
+  }
+
+  // An array's rows can hold arrays of their own, at any depth the config
+  // declares. Prisma nests a `select` as far down as it is written.
+  for (const array of mapping.arrays.values()) {
+    select[array.prismaField] = arrayRead(array);
+  }
+
+  return select;
+}
+
+/** The nested read for one array: its rows, whole and in order. */
+function arrayRead(array: ArrayFieldMapping): Record<string, unknown> {
+  return {
+    select: buildSelect({ mapping: array.target }),
+    orderBy: arrayOrderBy(array),
+  };
+}
+
+/**
+ * The order an array's rows are read back in.
+ *
+ * Always ends on the primary key: without a unique tiebreaker two rows sharing
+ * a position can come back either way round, and the editor would see them swap
+ * between saves.
+ */
+function arrayOrderBy(array: ArrayFieldMapping): Record<string, string>[] {
+  const key = { [array.target.idField.name]: "asc" };
+  return array.orderColumn === undefined ? [key] : [{ [array.orderColumn]: "asc" }, key];
+}
+
+/**
+ * Builds the `include` a read needs to return every mapped relation and array.
  *
  * Only relations that cannot be read off a local column are included: to-many
  * relations, and the non-owning half of a to-one. Each selects the target's id
  * and nothing else, because that is all a relationship field holds and Payload
- * populates the rest through its own data loader.
+ * populates the rest through its own data loader. An array is the exception: its
+ * rows ARE the value, so they come back whole.
  *
  * @param props - Input props.
  * @param props.mapping - The collection's mapping.
@@ -183,7 +252,7 @@ export function buildInclude(props: {
   mapping: ModelMapping;
 }): Record<string, unknown> | undefined {
   const { mapping } = props;
-  if (mapping.includes.length === 0) return undefined;
+  if (mapping.includes.length === 0 && mapping.arrays.size === 0) return undefined;
 
   const include: Record<string, unknown> = {};
   for (const relation of mapping.includes) {
@@ -194,6 +263,9 @@ export function buildInclude(props: {
       // the editor arranged.
       ...(relation.orderBy !== undefined ? { orderBy: relation.orderBy } : {}),
     };
+  }
+  for (const array of mapping.arrays.values()) {
+    include[array.prismaField] = arrayRead(array);
   }
   return include;
 }

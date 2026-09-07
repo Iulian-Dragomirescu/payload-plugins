@@ -17,6 +17,7 @@ afterwards.
 | [Mapping](./mapping.md) | How does a collection point at a model and a field at a column? |
 | [Relationships](./relationships.md) | How do writes and reads handle relations? |
 | [Join fields](./joins.md) | How does a parent read its children? |
+| [Array fields](./arrays.md) | How does a parent write its children? |
 | [Globals](./globals.md) | How is a singleton stored in a table? |
 | [Queries](./queries.md) | Which filters and sorts translate, and which do not? |
 | [Limitations](./limitations.md) | What is not supported, stated plainly? |

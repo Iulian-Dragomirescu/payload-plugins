@@ -159,6 +159,23 @@ export interface Post {
    */
   tags?: (string | Tag)[] | null;
   parent?: (string | null) | Post;
+  /**
+   * Rows in post_sections. Editing one keeps its id; removing one deletes the row.
+   */
+  sections?:
+    | {
+        heading: string;
+        body?: string | null;
+        links?:
+          | {
+              label: string;
+              url: string;
+              id?: string | null;
+            }[]
+          | null;
+        id?: string | null;
+      }[]
+    | null;
   meta?: {
     title?: string | null;
     description?: string | null;
@@ -352,6 +369,20 @@ export interface PostsSelect<T extends boolean = true> {
   reviewer?: T;
   tags?: T;
   parent?: T;
+  sections?:
+    | T
+    | {
+        heading?: T;
+        body?: T;
+        links?:
+          | T
+          | {
+              label?: T;
+              url?: T;
+              id?: T;
+            };
+        id?: T;
+      };
   meta?:
     | T
     | {

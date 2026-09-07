@@ -16,7 +16,7 @@ import type {
 } from "payload";
 import { APIError, ValidationError } from "payload";
 
-import type { JoinFieldMapping, ModelMapping } from "./mapping/types.js";
+import type { ArrayFieldMapping, JoinFieldMapping, ModelMapping } from "./mapping/types.js";
 import type { PrismaOrderBy } from "./query/sort.js";
 import { buildOrderBy } from "./query/sort.js";
 import type { PrismaWhere } from "./query/where.js";
@@ -24,6 +24,7 @@ import { buildWhere, mergeWhere } from "./query/where.js";
 import { coercePrimaryKey } from "./schema/coerce.js";
 import { buildInclude, toJoinPage, toPayloadDoc } from "./transform/read.js";
 import type { PrismaRow } from "./transform/read.js";
+import type { ExistingArrays, ExistingRows } from "./transform/write.js";
 import { buildData } from "./transform/write.js";
 
 /**
@@ -279,6 +280,77 @@ function withJoins(props: {
     });
   }
   return doc;
+}
+
+/** The nested select that reads one array's row ids, and its rows' rows. */
+function arrayIdSelect(array: ArrayFieldMapping): Record<string, unknown> {
+  const select: Record<string, unknown> = { [array.target.idField.name]: true };
+  for (const nested of array.target.arrays.values()) {
+    select[nested.prismaField] = arrayIdSelect(nested);
+  }
+  return { select };
+}
+
+/** Turns the pre-read's row into the ids each array holds, at every depth. */
+function readArrayIds(props: { row: unknown; mapping: ModelMapping }): ExistingArrays {
+  const { row, mapping } = props;
+  const arrays: ExistingArrays = new Map();
+  const source = (row ?? {}) as Record<string, unknown>;
+
+  for (const [path, array] of mapping.arrays) {
+    const rows = source[array.prismaField];
+    // Absent rather than empty for an array the write did not touch, which must
+    // not read as "this parent holds nothing".
+    if (!Array.isArray(rows)) continue;
+
+    const held: ExistingRows = new Map();
+    for (const entry of rows as Record<string, unknown>[]) {
+      held.set(
+        String(entry[array.target.idField.name]),
+        readArrayIds({ row: entry, mapping: array.target }),
+      );
+    }
+    arrays.set(path, held);
+  }
+  return arrays;
+}
+
+/**
+ * Reads the rows each array on this document currently holds.
+ *
+ * A write has to tell an edit from an insert, and the incoming id cannot: the
+ * admin panel invents one for every new row. The rows the parent actually has
+ * are the only thing that can, so they are read first.
+ *
+ * One query however deep the arrays nest, and ids only: the whole tree comes
+ * back as nested selects on the parent's own row.
+ *
+ * @param props - Input props.
+ * @param props.mapping - The collection's or global's mapping.
+ * @param props.id - The parent row's primary key, already coerced.
+ * @param props.data - What Payload submitted, so an array it left out is not read.
+ * @returns The rows by array field name, empty when the write touches no array.
+ */
+async function currentArrayRows(props: {
+  context: PrismaContext;
+  mapping: ModelMapping;
+  id: unknown;
+  data: Record<string, unknown>;
+}): Promise<ExistingArrays> {
+  const { context, mapping, id, data } = props;
+
+  const select: Record<string, unknown> = {};
+  for (const [path, array] of mapping.arrays) {
+    if (!(path in data)) continue;
+    select[array.prismaField] = arrayIdSelect(array);
+  }
+  if (Object.keys(select).length === 0) return new Map();
+
+  const row = await delegate(context, mapping).findFirst({
+    where: { [mapping.idField.name]: id },
+    select,
+  });
+  return readArrayIds({ row, mapping });
 }
 
 /**
@@ -550,7 +622,6 @@ export async function create(context: PrismaContext, args: CreateArgs): Promise<
 export async function updateOne(context: PrismaContext, args: UpdateOneArgs): Promise<Document> {
   const mapping = require_(context, args.collection);
   const model = delegate(context, mapping);
-  const data = buildData({ data: args.data, mapping, mode: "update" });
   const joins = requestedJoins({ context, mapping, joins: args.joins });
 
   try {
@@ -570,6 +641,13 @@ export async function updateOne(context: PrismaContext, args: UpdateOneArgs): Pr
             }
             return row[mapping.idField.name];
           })();
+
+    const data = buildData({
+      data: args.data,
+      mapping,
+      mode: "update",
+      existing: await currentArrayRows({ context, mapping, id, data: args.data }),
+    });
 
     const row = await model.update({
       ...readArgs(mapping, joins),
@@ -596,8 +674,13 @@ export async function updateMany(
   const mapping = require_(context, args.collection);
   const model = delegate(context, mapping);
   const filter = where(context, mapping, args.where);
-  const data = buildData({ data: args.data, mapping, mode: "update" });
   const joins = requestedJoins({ context, mapping, joins: args.joins });
+  // An array's write depends on which rows the parent already has, so a mapping
+  // with one has to build its data per document rather than once.
+  const shared =
+    mapping.arrays.size === 0
+      ? buildData({ data: args.data, mapping, mode: "update" })
+      : undefined;
 
   try {
     // Prisma's `updateMany` takes no nested relation writes, so the rows are
@@ -612,10 +695,18 @@ export async function updateMany(
 
     const updated: Document[] = [];
     for (const row of rows) {
+      const id = row[mapping.idField.name];
       const result = await model.update({
         ...readArgs(mapping, joins),
-        where: { [mapping.idField.name]: row[mapping.idField.name] },
-        data,
+        where: { [mapping.idField.name]: id },
+        data:
+          shared ??
+          buildData({
+            data: args.data,
+            mapping,
+            mode: "update",
+            existing: await currentArrayRows({ context, mapping, id, data: args.data }),
+          }),
       });
       if (args.returning !== false) {
         updated.push(withJoins({ row: result, doc: toPayloadDoc({ row: result, mapping }), joins }));
@@ -800,10 +891,16 @@ export async function updateGlobal(
 
     if (existing === null) return await createGlobal(context, args);
 
+    const id = existing[mapping.idField.name];
     const row = await model.update({
       ...readArgs(mapping),
-      where: { [mapping.idField.name]: existing[mapping.idField.name] },
-      data: buildData({ data: args.data, mapping, mode: "update" }),
+      where: { [mapping.idField.name]: id },
+      data: buildData({
+        data: args.data,
+        mapping,
+        mode: "update",
+        existing: await currentArrayRows({ context, mapping, id, data: args.data }),
+      }),
     });
     return { ...toPayloadDoc({ row, mapping }), globalType: mapping.slug };
   } catch (error) {

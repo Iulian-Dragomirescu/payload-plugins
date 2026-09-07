@@ -58,9 +58,56 @@ model BlogPost {
   parentId String?
   children BlogPost[] @relation("PostHierarchy")
 
+  /// Rows this post OWNS, edited from the post's own form as an `array`.
+  sections PostSection[]
+
   @@index([authorId])
   @@index([publishedAt])
   @@map("blog_posts")
+}
+
+/// A CHILD TABLE: rows that belong to one post and have no life of their own.
+///
+/// This is the shape an editorial schema is full of — a quiz and its questions,
+/// a wheel and its segments — and the one a `relationship` cannot write.
+/// `postId` is NOT NULL, so removing a row means deleting it rather than
+/// clearing its foreign key, which is exactly what a Payload `array` does.
+///
+/// `order` is here because a Payload array is ordered and a table is not. The
+/// adapter writes the array's index into it on every save. It is a reserved word
+/// in SQL, which is fine: Prisma quotes every identifier.
+model PostSection {
+  id      String  @id @default(cuid())
+  heading String
+  body    String?
+  order   Int
+
+  post   BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId String
+
+  /// A SECOND level of child rows. An array holds arrays, and the whole tree is
+  /// read on the post's own query and written in one nested transaction.
+  links SectionLink[]
+
+  @@index([postId])
+  @@map("post_sections")
+}
+
+/// The grandchild. Its rows belong to a section, which belongs to a post.
+///
+/// `onDelete: Cascade` twice over, so removing a section in the admin panel
+/// takes its links with it. That is the schema's job, not the adapter's.
+model SectionLink {
+  id    String @id @default(cuid())
+  label String
+  url   String
+  order Int
+
+  section   PostSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  sectionId String
+
+  @@index([sectionId])
+  @@map("section_links")
 }
 
 model Author {

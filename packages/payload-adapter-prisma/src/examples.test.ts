@@ -26,6 +26,24 @@ const EXAMPLES = fileURLToPath(new URL("../examples", import.meta.url));
  */
 const GLOBALS = new Set(["EditorialSettings", "SeoDefaults", "SiteSettings", "SocialLinks"]);
 
+/**
+ * What Payload's `flattenedFields` would be for an example's fields.
+ *
+ * The examples list fields flat, so at the top level this is the identity. An
+ * `array` is the exception: Payload keeps it, adds an `id` subfield, and
+ * flattens what is inside it.
+ */
+function flatten(fields: unknown[]): unknown[] {
+  return fields.map((field) => {
+    const entry = field as { type?: string; fields?: unknown[] };
+    if (entry.type !== "array" || entry.fields === undefined) return field;
+    return {
+      ...entry,
+      flattenedFields: [...flatten(entry.fields), { name: "id", type: "text" }],
+    };
+  });
+}
+
 /** Every example directory, and what shape its `config.ts` is. */
 const examples = readdirSync(EXAMPLES, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
@@ -45,7 +63,7 @@ describe("examples", () => {
   it("accounts for every directory", () => {
     // A rename that quietly emptied the list would make every case below pass.
     expect(examples.map((example) => example.name)).toEqual(
-      expect.arrayContaining(["globals", "joins", "minimal", "relationships"]),
+      expect.arrayContaining(["arrays", "globals", "joins", "minimal", "relationships"]),
     );
   });
 
@@ -61,11 +79,9 @@ describe("examples", () => {
       const collections: SanitizedCollectionConfig[] = [];
       const globals: SanitizedGlobalConfig[] = [];
       for (const [exported, config] of Object.entries(module_)) {
-        // The examples list fields flat, so Payload's flattening is the
-        // identity and the mapper can read them as they are written.
         const sanitized = {
           ...(config as object),
-          flattenedFields: (config as { fields: unknown[] }).fields,
+          flattenedFields: flatten((config as { fields: unknown[] }).fields),
         };
         (GLOBALS.has(exported) ? globals : collections).push(sanitized as never);
       }

@@ -9,6 +9,7 @@ import type {
 import type { Datamodel, DatamodelField, DatamodelModel } from "../schema/datamodel.js";
 import { delegateKey } from "../schema/datamodel.js";
 import type {
+  ArrayFieldMapping,
   FieldMapping,
   JoinFieldMapping,
   ModelMapping,
@@ -271,6 +272,9 @@ function assertRemovable(props: {
       `schema.prisma, so the first removal fails at the database with "would violate the ` +
       `required relation". Adding works until then, which is why this is a startup error.\n` +
       `Pick one:\n` +
+      `  • \`type: "array", custom: { prisma: { order: "…" } }\` with the child's fields, if ` +
+      `"${targetModel.name}" rows belong to this ${kind}. An array deletes a removed row ` +
+      `instead of detaching it, so a non-null foreign key is no obstacle.\n` +
       `  • \`type: "join", collection: "…", on: "${back?.name ?? "…"}"\` instead of the ` +
       `relationship, which reads the children and never writes the set.\n` +
       `  • \`custom: { prisma: { readOnly: true } }\` on the field, to read the set and ` +
@@ -334,6 +338,8 @@ function readOrderBy(props: {
  * Builds the mapping for one relationship field.
  *
  * @param props - Input props.
+ * @param props.prefix - Prepended to the field's name in error messages, so a
+ *   subfield inside an `array` reads as `options.tag` rather than as `tag`.
  * @returns The relation mapping.
  */
 function buildRelationMapping(props: {
@@ -342,9 +348,11 @@ function buildRelationMapping(props: {
   datamodel: Datamodel;
   slug: string;
   kind: Kind;
+  prefix: string;
 }): RelationFieldMapping {
-  const { field, model, datamodel, slug, kind } = props;
-  const path = (field as { name: string }).name;
+  const { field, model, datamodel, slug, kind, prefix } = props;
+  const name = (field as { name: string }).name;
+  const path = `${prefix}${name}`;
   const declared = readFieldMapping(field);
 
   const relationTo = (field as { relationTo?: string | string[] }).relationTo;
@@ -360,7 +368,7 @@ function buildRelationMapping(props: {
 
   const relation = resolveRelationField({
     model,
-    candidateName: declared.field ?? path,
+    candidateName: declared.field ?? name,
     foreignKey: declared.foreignKey,
     slug,
     kind,
@@ -413,7 +421,7 @@ function buildRelationMapping(props: {
 
   return {
     kind: "relation",
-    path,
+    path: name,
     prismaField: relation.name,
     readOnly,
     field: relation,
@@ -430,6 +438,7 @@ function buildRelationMapping(props: {
  * Builds the mapping for one scalar field.
  *
  * @param props - Input props.
+ * @param props.prefix - Prepended to the field's name in error messages.
  * @returns The scalar mapping.
  */
 function buildScalarMapping(props: {
@@ -437,11 +446,13 @@ function buildScalarMapping(props: {
   model: DatamodelModel;
   slug: string;
   kind: Kind;
+  prefix: string;
 }): FieldMapping {
-  const { field, model, slug, kind } = props;
-  const path = (field as { name: string }).name;
+  const { field, model, slug, kind, prefix } = props;
+  const name = (field as { name: string }).name;
+  const path = `${prefix}${name}`;
   const declared = readFieldMapping(field);
-  const target = declared.field ?? path;
+  const target = declared.field ?? name;
 
   const column = model.fields.find((entry) => entry.name === target);
   if (column === undefined) {
@@ -464,9 +475,24 @@ function buildScalarMapping(props: {
     );
   }
 
+  // `order` is the array-onto-a-child-table key, and reaching a column means
+  // this array is stored whole in one `Json` value instead, where the order is
+  // part of the value and nothing needs a column.
+  if (declared.order !== undefined) {
+    const relations = model.fields.filter((entry) => entry.kind === "object").map((e) => e.name);
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" sets \`order: "${declared.order}"\`, but it maps ` +
+        `to "${model.name}.${column.name}", a ${column.type} column, so its rows are stored in ` +
+        `that one value rather than in a child table.\n` +
+        `Point the field at the relation holding the rows with ` +
+        `\`custom: { prisma: { field: "…" } }\`${relations.length > 0 ? ` (relations on ` +
+        `"${model.name}": ${nameList(relations)})` : ""}, or drop \`order\`.`,
+    );
+  }
+
   return {
     kind: "scalar",
-    path,
+    path: name,
     prismaField: column.name,
     // A `@updatedAt` column is Prisma's to maintain and an `autoincrement()`
     // key is the database's. Writing either is an error, not a preference, so
@@ -543,7 +569,68 @@ export function buildModelMapping(props: {
     );
   }
 
+  const { arrays, fields, includes } = buildFields({
+    flattenedFields,
+    model,
+    datamodel,
+    idField,
+    slug,
+    kind,
+    prefix: "",
+  });
+
+  return {
+    slug,
+    kind,
+    model: model.name,
+    delegate: delegateKey({ model: model.name }),
+    idField,
+    fields,
+    arrays,
+    joins: new Map(),
+    includes,
+    uncreatable: findUncreatableColumns({
+      model,
+      fields,
+      // A global's discriminator is merged into every create, so its columns
+      // are written even though no field names them.
+      also: kind === "global" && declared.where !== undefined ? Object.keys(declared.where) : [],
+    }),
+    ...(kind === "global" && declared.where !== undefined ? { singleton: declared.where } : {}),
+  };
+}
+
+/**
+ * Resolves a set of Payload fields against one Prisma model.
+ *
+ * Shared by a collection, a global and an `array`'s child rows, so a subfield
+ * inside an array is resolved by the same rules, with the same renames and the
+ * same error messages, as a top-level field.
+ *
+ * @param props - Input props.
+ * @param props.idField - The model's primary key, mapped as Payload's `id`.
+ * @param props.prefix - Prepended to field names in error messages.
+ * @returns The field mappings, the relations a read must include, and the
+ *   arrays.
+ * @throws {PrismaAdapterMappingError} When a field cannot be resolved.
+ */
+function buildFields(props: {
+  flattenedFields: FlattenedField[];
+  model: DatamodelModel;
+  datamodel: Datamodel;
+  idField: DatamodelField;
+  slug: string;
+  kind: Kind;
+  prefix: string;
+}): {
+  arrays: Map<string, ArrayFieldMapping>;
+  fields: Map<string, FieldMapping>;
+  includes: RelationFieldMapping[];
+} {
+  const { flattenedFields, model, datamodel, idField, slug, kind, prefix } = props;
+
   const fields = new Map<string, FieldMapping>();
+  const arrays = new Map<string, ArrayFieldMapping>();
   const includes: RelationFieldMapping[] = [];
 
   /** Payload's own `id`, which is the primary key whatever the column is called. */
@@ -579,9 +666,17 @@ export function buildModelMapping(props: {
       continue;
     }
 
+    if (isChildTableArray({ field, model })) {
+      arrays.set(
+        path,
+        buildArrayMapping({ field, path: `${prefix}${path}`, model, datamodel, slug, kind }),
+      );
+      continue;
+    }
+
     const mapping = isRelationLike(field)
-      ? buildRelationMapping({ field, model, datamodel, slug, kind })
-      : buildScalarMapping({ field, model, slug, kind });
+      ? buildRelationMapping({ field, model, datamodel, slug, kind, prefix })
+      : buildScalarMapping({ field, model, slug, kind, prefix });
 
     fields.set(path, mapping);
     if (mapping.kind === "relation" && (mapping.isList || !mapping.ownsForeignKey)) {
@@ -593,23 +688,254 @@ export function buildModelMapping(props: {
   // usual case: Payload only puts `id` in `fields` for a custom ID.
   if (!fields.has("id")) fields.set("id", idMapping);
 
-  return {
+  return { arrays, fields, includes };
+}
+
+/** Numeric column types an array's order can be written into. */
+const ORDERABLE = new Set(["BigInt", "Decimal", "Float", "Int"]);
+
+/**
+ * Whether an `array` field names a relation rather than a column.
+ *
+ * The gate between a child table and one `Json` column, and the reason adding
+ * arrays breaks nobody's config: an array that works today points at a `Json`
+ * column, so it keeps doing that. One pointing at a relation used to be a
+ * mapping error.
+ *
+ * @param props - Input props.
+ * @param props.field - The array field.
+ * @param props.model - The model the parent maps onto.
+ * @returns `true` when the array's rows live in a child table.
+ */
+function isChildTableArray(props: { field: FlattenedField; model: DatamodelModel }): boolean {
+  const { field, model } = props;
+  if (field.type !== "array") return false;
+  const declared = readFieldMapping(field);
+  const target = declared.field ?? (field as { name: string }).name;
+  return model.fields.some((entry) => entry.name === target && entry.kind === "object");
+}
+
+/**
+ * Resolves the column an array writes its row order into.
+ *
+ * A Payload array is ordered and a table is not, so the order has to be a
+ * column. Leaving it out is allowed, but only as a deliberate
+ * `admin.isSortable: false`, because the alternative is an editor arranging rows
+ * that come back in a different order on the next read.
+ *
+ * @param props - Input props.
+ * @returns The column name, or `undefined` for a field that is not sortable.
+ * @throws {PrismaAdapterMappingError} When there is no usable order column.
+ */
+function readOrderColumn(props: {
+  declared: PrismaFieldMapping;
+  field: FlattenedField;
+  targetModel: DatamodelModel;
+  slug: string;
+  kind: Kind;
+  path: string;
+}): string | undefined {
+  const { declared, field, targetModel, slug, kind, path } = props;
+  const sortable = (field as { admin?: { isSortable?: boolean } }).admin?.isSortable !== false;
+
+  if (declared.order === undefined) {
+    if (!sortable) return undefined;
+    const numeric = targetModel.fields
+      .filter((entry) => entry.kind === "scalar" && ORDERABLE.has(entry.type) && !entry.isList)
+      .map((entry) => entry.name);
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" is an ordered array over ` +
+        `"${targetModel.name}", but names no column to keep the order in, so the rows would ` +
+        `come back in whatever order the database chose.\nPick one:\n` +
+        `  • \`custom: { prisma: { order: "…" } }\` naming a numeric column on ` +
+        `"${targetModel.name}"${numeric.length > 0 ? ` (${nameList(numeric)})` : ""}.\n` +
+        `  • \`admin: { isSortable: false }\` on the field, if the order does not matter.`,
+    );
+  }
+
+  const column = targetModel.fields.find((entry) => entry.name === declared.order);
+  if (column === undefined || column.kind === "object" || column.isList) {
+    const scalars = targetModel.fields
+      .filter((entry) => entry.kind !== "object" && !entry.isList)
+      .map((entry) => entry.name);
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" sets \`order: "${declared.order}"\`, which is ` +
+        `${column === undefined ? "not a column on" : "not a single column on"} ` +
+        `"${targetModel.name}".\nColumns on "${targetModel.name}": ${nameList(scalars)}.`,
+    );
+  }
+
+  if (!ORDERABLE.has(column.type)) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" orders by "${targetModel.name}.${column.name}", ` +
+        `which is a \`${column.type}\`. The adapter writes the array's index into it, so it has ` +
+        `to be numeric (${nameList([...ORDERABLE])}).`,
+    );
+  }
+
+  if (column.isUpdatedAt || column.isGenerated) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" orders by ` +
+        `"${targetModel.name}.${column.name}", which the database maintains. The adapter has ` +
+        `to write the array's index there, so it needs a plain column.`,
+    );
+  }
+
+  return column.name;
+}
+
+/**
+ * Builds the mapping for one `array` whose rows live in a child table.
+ *
+ * @param props - Input props.
+ * @param props.field - The array field, as Payload flattened it.
+ * @param props.path - The field's name, prefixed for error messages.
+ * @param props.model - The parent's model.
+ * @returns The array mapping.
+ * @throws {PrismaAdapterMappingError} When the child table cannot be written as
+ *   an array.
+ */
+function buildArrayMapping(props: {
+  field: FlattenedField;
+  path: string;
+  model: DatamodelModel;
+  datamodel: Datamodel;
+  slug: string;
+  kind: Kind;
+}): ArrayFieldMapping {
+  const { field, path, model, datamodel, slug, kind } = props;
+  const name = (field as { name: string }).name;
+  const declared = readFieldMapping(field);
+
+  // `isChildTableArray` already found it, which is what routed the field here.
+  const relation = model.fields.find(
+    (entry) => entry.name === (declared.field ?? name) && entry.kind === "object",
+  ) as DatamodelField;
+
+  if (!relation.isList) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" is an \`array\`, but ` +
+        `"${model.name}.${relation.name}" is a to-one relation, so there is only ever one row ` +
+        `to hold.\nUse a \`group\` with \`custom: { prisma: { field: "${relation.name}" } }\`, ` +
+        `or make the relation a list in schema.prisma.`,
+    );
+  }
+
+  const targetModel = datamodel.models[relation.type];
+  if (targetModel === undefined) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" points at Prisma model "${relation.type}", ` +
+        `which is not in the schema. Models: ${nameList(Object.keys(datamodel.models))}.`,
+    );
+  }
+
+  const idField = targetModel.fields.find((entry) => entry.isId);
+  if (idField === undefined) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" holds rows of "${targetModel.name}", which has ` +
+        `no single-column \`@id\`. An array edits rows in place rather than deleting and ` +
+        `recreating them, and it addresses each one by id.\nAdd a surrogate \`@id\` column.`,
+    );
+  }
+
+  // Every row is created by the parent's nested write, which has no id to give.
+  if (!idField.hasDefaultValue && !idField.isGenerated) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" holds rows of "${targetModel.name}", whose ` +
+        `"${idField.name}" has no default. A row is created as part of saving the parent, and ` +
+        `there is nothing there to supply an id from: the one the admin panel sends is a ` +
+        `client-side placeholder.\nGive "${targetModel.name}.${idField.name}" a ` +
+        `\`@default(cuid())\`, \`@default(uuid())\` or \`@default(autoincrement())\`.`,
+    );
+  }
+
+  const back = findBackRelation({ relation, modelName: model.name, targetModel });
+  if (back === undefined) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" is an array over ` +
+        `"${model.name}.${relation.name}", but "${targetModel.name}" declares no field for the ` +
+        `other side of it, or declares more than one and none of them is named.\n` +
+        `Name both sides with \`@relation("…")\` in schema.prisma.`,
+    );
+  }
+
+  const foreignKey = (back.relationFromFields ?? [])[0];
+  if (foreignKey === undefined) {
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" is an array over ` +
+        `"${model.name}.${relation.name}", which is a many-to-many: ` +
+        `"${targetModel.name}" holds no foreign key back, so its rows exist independently of ` +
+        `this ${kind}.\nAn array owns its rows and deletes the ones the editor removes, which ` +
+        `here would delete rows other documents share.\n` +
+        `Use \`type: "relationship", hasMany: true\` instead, which connects and disconnects ` +
+        `rather than creating and deleting.`,
+    );
+  }
+
+  const orderColumn = readOrderColumn({ declared, field, targetModel, slug, kind, path });
+
+  const { arrays, fields, includes } = buildFields({
+    flattenedFields: (field as { flattenedFields?: FlattenedField[] }).flattenedFields ?? [],
+    model: targetModel,
+    datamodel,
+    idField,
     slug,
     kind,
-    model: model.name,
-    delegate: delegateKey({ model: model.name }),
-    idField,
+    prefix: `${path}.`,
+  });
+
+  // Both columns are the adapter's to write: the foreign key through the nested
+  // `create`, the order from the row's index. A field on either would be a
+  // second writer submitting a different value on every save.
+  for (const [column, reason] of [
+    [foreignKey, `the parent this row belongs to`],
+    ...(orderColumn !== undefined ? [[orderColumn, `this row's position in the array`]] : []),
+  ] as [string, string][]) {
+    const clash = [...fields.values()].find((entry) => entry.prismaField === column);
+    if (clash !== undefined && !clash.readOnly) {
+      throw new PrismaAdapterMappingError(
+        `${label(kind)} "${slug}" field "${path}.${clash.path}" writes ` +
+          `"${targetModel.name}.${column}", which the adapter writes itself with ${reason}.\n` +
+          `Drop the field, or mark it \`custom: { prisma: { readOnly: true } }\` to read the ` +
+          `column without writing it.`,
+      );
+    }
+  }
+
+  const uncreatable = findUncreatableColumns({
+    model: targetModel,
     fields,
-    joins: new Map(),
-    includes,
-    uncreatable: findUncreatableColumns({
-      model,
+    also: orderColumn !== undefined ? [foreignKey, orderColumn] : [foreignKey],
+  });
+  if (uncreatable.length > 0) {
+    const one = uncreatable.length === 1;
+    throw new PrismaAdapterMappingError(
+      `${label(kind)} "${slug}" field "${path}" cannot add a row to "${targetModel.name}". ` +
+        `${uncreatable.map((column) => `"${targetModel.name}.${column}"`).join(", ")} ` +
+        `${one ? "is" : "are"} non-null with no default, and the array declares no field for ` +
+        `${one ? "it" : "them"}.\nAdd a subfield for each, give the column a default, or make ` +
+        `it optional. Unlike a collection, an array is editable by definition, so this cannot ` +
+        `be left until the first save.`,
+    );
+  }
+
+  return {
+    path: name,
+    prismaField: relation.name,
+    target: {
+      slug,
+      kind,
+      model: targetModel.name,
+      delegate: delegateKey({ model: targetModel.name }),
+      idField,
       fields,
-      // A global's discriminator is merged into every create, so its columns
-      // are written even though no field names them.
-      also: kind === "global" && declared.where !== undefined ? Object.keys(declared.where) : [],
-    }),
-    ...(kind === "global" && declared.where !== undefined ? { singleton: declared.where } : {}),
+      arrays,
+      joins: new Map(),
+      includes,
+      uncreatable: [],
+    },
+    foreignKey,
+    ...(orderColumn !== undefined ? { orderColumn } : {}),
   };
 }
 

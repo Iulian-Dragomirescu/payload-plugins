@@ -17,6 +17,7 @@ There is no wrapper function and no fork.
 | `foreignKey` | relationship | Which foreign key this relation travels over. |
 | `readOnly` | field | Read this column, never write it. |
 | `orderBy` | to-many relationship | Which order its rows come back in. See [Relationships](./relationships.md#ordering-an-included-to-many). |
+| `order` | array | Which column keeps a row's position. See [Array fields](./arrays.md#order). |
 | `where` | global | Which row of the table this global is. See [Globals](./globals.md). |
 
 Only `model` is required, and most fields need nothing at all.
@@ -93,6 +94,10 @@ being editable.
 
 `group`, `array`, `blocks`, `json` and `richText` hold a structure rather than a
 scalar. They land in a `Json` column whole.
+
+An `array` is the exception: when its Prisma field is a relation rather than a
+column, it maps onto that child table instead. See [Array
+fields](./arrays.md).
 
 ```prisma
 model BlogPost {

@@ -95,4 +95,4 @@ relation once per query.
 
 ## Next
 
-[`globals`](../globals).
+[`arrays`](../arrays).

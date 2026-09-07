@@ -84,5 +84,33 @@ export const Posts: CollectionConfig = {
       custom: { prisma: { field: "parent", foreignKey: "parentId" } },
       admin: { position: "sidebar" },
     },
+    {
+      name: "sections",
+      type: "array",
+      // Rows in `post_sections`, not a `Json` column. `order` names the column
+      // the array's index is written into; without it the rows would come back
+      // in whatever order the database chose.
+      custom: { prisma: { order: "order" } },
+      fields: [
+        { name: "heading", type: "text", required: true },
+        { name: "body", type: "textarea" },
+        {
+          name: "links",
+          type: "array",
+          // An array inside an array: `section_links` rows, reached through the
+          // section they belong to. One save writes the post, its sections and
+          // their links in a single nested transaction.
+          custom: { prisma: { order: "order" } },
+          fields: [
+            { name: "label", type: "text", required: true },
+            { name: "url", type: "text", required: true },
+          ],
+        },
+      ],
+      admin: {
+        description:
+          "Rows in post_sections. Editing one keeps its id; removing one deletes the row.",
+      },
+    },
   ],
 };
