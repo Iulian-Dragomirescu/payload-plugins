@@ -1,14 +1,20 @@
 import type { CollectionConfig } from "payload";
 
 /**
- * Authors, mapped onto `Author`. Two edge cases in one config.
+ * Authors, mapped onto `Author`. Three edge cases in one config.
  *
  * `timestamps: false` because the `authors` table has no `createdAt` or
  * `updatedAt`, and the adapter will not invent the columns Payload adds by
  * default.
  *
- * `posts` is the NON-OWNING side of a relation: `blog_posts.authorId` holds the
- * key, so there is no column here to write, and the field is read-only.
+ * `posts` and `reviewed` are both NON-OWNING sides of a to-many, and the
+ * difference between them is the schema rather than the config.
+ * `blog_posts.authorId` is NOT NULL, so the `set` an update writes could not
+ * disconnect a post and the field has to be read-only. `blog_posts.reviewerId`
+ * is nullable, so `reviewed` is writable and removing a post there works.
+ *
+ * `Author` declares two relations to `BlogPost`, so `custom.prisma.field` is
+ * what tells them apart.
  */
 export const Authors: CollectionConfig = {
   slug: "authors",
@@ -38,6 +44,21 @@ export const Authors: CollectionConfig = {
         readOnly: true,
         description: "Read from the other side of the relation. Edit it on the post.",
       },
+    },
+    {
+      name: "reviewed",
+      type: "relationship",
+      relationTo: "posts",
+      hasMany: true,
+      // The Payload field is `reviewed` and the Prisma relation is `reviewing`,
+      // so `field` names it. Unlike `posts` above this one is WRITABLE:
+      // `blog_posts.reviewerId` is nullable, so the `set` an update writes may
+      // legally disconnect a post the editor removed.
+      //
+      // `orderBy` because an include comes back in whatever order the database
+      // chose, and this list means "newest first".
+      custom: { prisma: { field: "reviewing", orderBy: { publishedAt: "desc" } } },
+      admin: { description: "Posts this author reviewed, newest first." },
     },
   ],
 };

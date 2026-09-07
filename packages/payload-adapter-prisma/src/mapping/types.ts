@@ -1,3 +1,5 @@
+import type { Sort, Where } from "payload";
+
 import type { DatamodelField, DatamodelModel } from "../schema/datamodel.js";
 
 /**
@@ -82,7 +84,29 @@ export interface PrismaFieldMapping {
    * dropped from every `create` and `update` payload.
    */
   readOnly?: boolean;
+  /**
+   * How the rows of a to-many relationship come back.
+   *
+   * A Prisma `include` returns related rows in whatever order the database
+   * chose, which for a child table with its own `order` column is not the one
+   * the editor arranged. Names columns on the TARGET model.
+   *
+   * @example
+   * ```ts
+   * { name: "options", type: "relationship", relationTo: "wheel-options", hasMany: true,
+   *   custom: { prisma: { orderBy: { position: "asc" } } } }
+   * ```
+   */
+  orderBy?: PrismaOrderByInput;
 }
+
+/**
+ * A Prisma `orderBy` as a field mapping may declare it: one column, or several
+ * applied in order.
+ */
+export type PrismaOrderByInput =
+  | Record<string, "asc" | "desc">
+  | Record<string, "asc" | "desc">[];
 
 /** What every field mapping carries, whatever its kind. */
 interface FieldMappingBase {
@@ -142,6 +166,40 @@ export interface RelationFieldMapping extends FieldMappingBase {
   targetIdField: DatamodelField;
   /** Whether the relation is to-many. */
   isList: boolean;
+  /** How to order the rows of a to-many, when the field declares an order. */
+  orderBy?: PrismaOrderByInput;
+}
+
+/**
+ * A field backed by the OTHER model's foreign key.
+ *
+ * Payload's `join` is a reverse lookup: the parent stores nothing, and the rows
+ * are found by following the child's relationship back. It is never written.
+ *
+ * @see {@link ./build!buildJoinMappings}, which resolves one against the child's
+ *   own mapping, so the child's `custom.prisma` renames are honoured.
+ */
+export interface JoinFieldMapping {
+  /** The Payload field's name, which is also the join path Payload asks for. */
+  path: string;
+  /**
+   * The relation on THIS model that reaches the children.
+   *
+   * The other half of the child's relationship, which Prisma requires the
+   * schema to declare. Having it is what lets the children come back on the
+   * parent's own read, paginated per parent, rather than one query per row.
+   */
+  prismaField: string;
+  /** The child collection's mapping. Its `slug` is the field's `collection`. */
+  target: ModelMapping;
+  /** The child relationship this reverses. Its `path` is the field's `on`. */
+  targetRelation: RelationFieldMapping;
+  /** Rows per page when the query asks for no limit. Payload's own default is 10. */
+  defaultLimit: number;
+  /** The field's `defaultSort`, applied when the query asks for no sort. */
+  defaultSort?: Sort;
+  /** The field's own `where`, ANDed into every query for it. */
+  where?: Where;
 }
 
 /** One field's mapping. */
@@ -167,6 +225,14 @@ export interface ModelMapping {
   /** Field mappings by Payload field name. */
   fields: Map<string, FieldMapping>;
   /**
+   * Join mappings by Payload field name, kept apart from {@link fields}.
+   *
+   * A join is not a column, so it is not writable, sortable or queryable the
+   * way the others are. Filled by a second pass, because a join names another
+   * collection that may not have been mapped yet when this one was built.
+   */
+  joins: Map<string, JoinFieldMapping>;
+  /**
    * Relation mappings that must be `include`d to be read back.
    *
    * A to-one relation this model owns comes off its foreign-key column and
@@ -174,6 +240,15 @@ export interface ModelMapping {
    * fetched.
    */
   includes: RelationFieldMapping[];
+  /**
+   * Columns a `create` cannot supply and the database will not fill in.
+   *
+   * Non-null, no default, and no field in the config pointing at them. Reads
+   * are unaffected, so this is not a mapping error, but every `create` on this
+   * collection fails and the reason is known at startup rather than at the
+   * first save.
+   */
+  uncreatable: string[];
   /**
    * The Prisma `where` that narrows a global's table to its one row.
    *

@@ -65,6 +65,46 @@ function relatedId(value: unknown, idKey: string): null | string {
 }
 
 /**
+ * A join field's value, as Payload reads it.
+ *
+ * Ids rather than documents, the same as a relationship: Payload populates them
+ * through its own data loader in `afterRead`.
+ */
+export interface JoinPage {
+  docs: (null | string)[];
+  hasNextPage: boolean;
+  totalDocs?: number;
+}
+
+/**
+ * Builds the envelope Payload reads a join field as.
+ *
+ * @param props - Input props.
+ * @param props.rows - The included child rows: one page, plus the extra row the
+ *   query asked for so `hasNextPage` needs no second round trip.
+ * @param props.idKey - The child's primary-key column.
+ * @param props.limit - Rows per page. `0` is Payload's spelling of "all of them".
+ * @param props.total - The counted total, absent unless the request asked to count.
+ * @returns The join value.
+ */
+export function toJoinPage(props: {
+  rows: unknown;
+  idKey: string;
+  limit: number;
+  total?: unknown;
+}): JoinPage {
+  const { rows, idKey, limit, total } = props;
+  const all = Array.isArray(rows) ? rows : [];
+  const page = limit > 0 ? all.slice(0, limit) : all;
+
+  return {
+    docs: page.map((entry) => relatedId(entry, idKey)),
+    hasNextPage: limit > 0 && all.length > limit,
+    ...(typeof total === "number" ? { totalDocs: total } : {}),
+  };
+}
+
+/**
  * Translates a Prisma row into a Payload document.
  *
  * Columns become field names, the primary key becomes `id`, and relations
@@ -147,7 +187,13 @@ export function buildInclude(props: {
 
   const include: Record<string, unknown> = {};
   for (const relation of mapping.includes) {
-    include[relation.prismaField] = { select: { [relation.targetIdField.name]: true } };
+    include[relation.prismaField] = {
+      select: { [relation.targetIdField.name]: true },
+      // Without one the database returns the rows in whatever order it chose,
+      // which for a child table carrying its own `order` column is not the one
+      // the editor arranged.
+      ...(relation.orderBy !== undefined ? { orderBy: relation.orderBy } : {}),
+    };
   }
   return include;
 }

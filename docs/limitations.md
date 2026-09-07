@@ -44,10 +44,34 @@ per field. A column holds one value.
 
 A localized collection can still be unmapped and stored internally.
 
-## Join fields
+## A to-many whose children cannot be detached
 
-Payload's `join` field type is a reverse lookup, not implemented here. Query the
-other side instead.
+A Payload update writes the whole set at once, which Prisma spells `set`, and
+`set` disconnects every row the editor removed. When the child's foreign key is
+non-null, that means writing NULL into a NOT NULL column, and the database
+refuses.
+
+The adapter raises this at startup rather than on the first removal. Read the
+field as a [join](./joins.md), mark it `readOnly`, or make the foreign key
+optional.
+
+## A column no create can fill in
+
+A non-null column with no default that no field maps makes every `create` on that
+collection fail. Reads are unaffected, so this is a startup warning rather than
+an error: a collection is allowed to be a read-only view onto a table something
+else fills. A `create` against one refuses with the column named.
+
+## Join fields, partly
+
+Supported, and documented in [Join fields](./joins.md). Five shapes are not, and
+each is a startup error rather than a field that renders empty:
+
+* a polymorphic join, `collection: ["a", "b"]`
+* a nested `on`, which would point inside a `Json` column
+* a join on a global, which Payload never populates on any adapter
+* a join over a one-to-one, which has no page to paginate
+* a join over a relation a `relationship` field already maps
 
 ## Geospatial operators
 
