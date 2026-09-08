@@ -138,6 +138,56 @@ describe("buildWhere — relationships", () => {
   });
 });
 
+describe("buildWhere — comma-delineated list operands", () => {
+  // REST sends `?where[id][in]=a,b,c`, and Payload passes the raw string down.
+  // Wrapped rather than split it becomes the single operand `["a,b,c"]`, which
+  // matches no row: every relationship cell in the list view, every list-view
+  // filter, and bulk edit and delete all query this way.
+
+  it("splits a string operand for `in`", () => {
+    expect(where({ id: { in: "p1,p2" } })).toEqual({ id: { in: ["p1", "p2"] } });
+  });
+
+  it("splits for `not_in` too", () => {
+    expect(where({ id: { not_in: "p1,p2" } })).toEqual({ id: { notIn: ["p1", "p2"] } });
+  });
+
+  it("coerces after splitting, not before", () => {
+    expect(where({ views: { in: "5,6" } })).toEqual({ views: { in: [5, 6] } });
+  });
+
+  it("splits inside a nested `or`", () => {
+    expect(where({ or: [{ id: { in: "p1,p2" } }] })).toEqual({
+      OR: [{ id: { in: ["p1", "p2"] } }],
+    });
+  });
+
+  it("splits the ids of an owning to-one relationship", () => {
+    expect(where({ author: { in: "a1,a2" } })).toEqual({ authorId: { in: ["a1", "a2"] } });
+  });
+
+  it("splits the ids of a to-many relationship", () => {
+    expect(where({ tags: { in: "1,2" } })).toEqual({ tags: { some: { id: { in: [1, 2] } } } });
+  });
+
+  it("splits for `all`, which is one clause per id", () => {
+    expect(where({ tags: { all: "1,2" } })).toEqual({
+      AND: [{ tags: { some: { id: 1 } } }, { tags: { some: { id: 2 } } }],
+    });
+  });
+
+  it("leaves a comma alone on the operators where it is ordinary text", () => {
+    expect(where({ title: { equals: "Salt, Fat, Acid" } })).toEqual({
+      title: { equals: "Salt, Fat, Acid" },
+    });
+    expect(where({ title: { like: "a,b" } })).toEqual({
+      title: { contains: "a,b", mode: "insensitive" },
+    });
+    // A relationship `equals` is one id, and an id may legitimately hold a comma.
+    expect(where({ author: { equals: "a,1" } })).toEqual({ authorId: { equals: "a,1" } });
+  });
+});
+
 describe("buildWhere — structure", () => {
   it("keeps and/or", () => {
     expect(where({ or: [{ featured: { equals: true } }, { views: { greater_than: 100 } }] })).toEqual(

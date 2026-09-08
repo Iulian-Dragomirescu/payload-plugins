@@ -1,4 +1,5 @@
 import type { Operator, Where, WhereField } from "payload";
+import { createArrayFromCommaDelineated } from "payload";
 
 import { coercePrimaryKey, coerceScalar } from "../schema/coerce.js";
 import type { DatamodelField } from "../schema/datamodel.js";
@@ -38,6 +39,30 @@ function isText(field: DatamodelField): boolean {
   return field.type === "String";
 }
 
+/** Operators whose operand is a list, so a query string may comma-delineate it. */
+const LIST_OPERATORS = new Set<Operator>(["all", "in", "not_in"]);
+
+/**
+ * Widens one operator's operand to the list of operands it stands for.
+ *
+ * Payload hands the adapter what the transport gave it, so `?where[id][in]=a,b`
+ * arrives as the string `"a,b"` and splitting it is each adapter's own job.
+ * Only the list operators split: a comma is ordinary text to `equals` or `like`.
+ *
+ * @param props - Input props.
+ * @param props.operator - The Payload operator.
+ * @param props.value - The operand, already an array or not.
+ * @returns The operands, uncoerced.
+ */
+function operands(props: { operator: Operator; value: unknown }): unknown[] {
+  const { operator, value } = props;
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string" && LIST_OPERATORS.has(operator)) {
+    return createArrayFromCommaDelineated(value);
+  }
+  return [value];
+}
+
 /**
  * Builds a Prisma filter for one condition on one scalar column.
  *
@@ -55,8 +80,7 @@ function scalarCondition(props: {
   const { operator, value, field } = props;
   const one = (input: unknown): unknown =>
     coerceScalar({ value: input, field: { ...field, isList: false } });
-  const many = (input: unknown): unknown[] =>
-    (Array.isArray(input) ? input : [input]).map(one);
+  const many = (input: unknown): unknown[] => operands({ operator, value: input }).map(one);
 
   // `equals` on a Prisma scalar list means "is exactly this list", which is
   // never what a CMS filter means, so lists use membership operators.
@@ -137,7 +161,7 @@ function relationCondition(props: {
     input === null || input === undefined
       ? null
       : coercePrimaryKey({ value: input, field: relation.targetIdField });
-  const ids = (input: unknown): unknown[] => (Array.isArray(input) ? input : [input]).map(id);
+  const ids = (input: unknown): unknown[] => operands({ operator, value: input }).map(id);
 
   if (relation.isList) {
     switch (operator) {
