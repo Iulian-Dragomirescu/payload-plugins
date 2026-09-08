@@ -425,17 +425,24 @@ export async function find(context: PrismaContext, args: FindArgs): Promise<Pagi
   const orderBy = buildOrderBy({ sort: args.sort, mapping, byModel: context.byModel });
   const joins = requestedJoins({ context, mapping, joins: args.joins });
 
-  const limit = args.limit ?? 10;
+  // No limit means everything, not a page of ten. Payload's own bulk delete
+  // calls `find` with neither `limit` nor `pagination`, then deletes the docs it
+  // gets back, so a default page size here silently caps a "delete all" at ten.
+  const limit = args.limit ?? 0;
   const page = args.page ?? 1;
-  // `pagination: false` and `limit: 0` both mean "everything", and Payload uses
-  // them interchangeably depending on the caller.
+  // `pagination: false` and `limit: 0` both mean "no envelope", and Payload uses
+  // them interchangeably depending on the caller. A limit still caps the rows.
   const unpaginated = args.pagination === false || limit === 0;
 
   const query: Record<string, unknown> = {
     ...readArgs(mapping, joins),
     orderBy,
     ...(filter !== undefined ? { where: filter } : {}),
-    ...(unpaginated ? {} : { skip: (page - 1) * limit, take: limit }),
+    ...(unpaginated
+      ? limit > 0
+        ? { take: limit }
+        : {}
+      : { skip: (page - 1) * limit, take: limit }),
   };
 
   try {
