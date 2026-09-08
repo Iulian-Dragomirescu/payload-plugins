@@ -75,4 +75,5 @@ Deleting an author a post references fails, because `BlogPost.author` declares n
 
 ## Next
 
-[`globals`](../globals).
+[`joins`](../joins), which is what the non-owning side above usually wants to
+be.

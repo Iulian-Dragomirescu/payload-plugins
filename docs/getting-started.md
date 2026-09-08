@@ -97,6 +97,38 @@ export default buildConfig({
 adapter opens no connection of its own. Every query goes through the client you
 pass, so your pooling, logging and extensions all still apply.
 
+### If your schema is a folder
+
+Prisma 7 gives new projects `prismaSchemaFolder`, so the schema is a directory of
+files rather than one:
+
+```
+prisma/
+  schema/
+    schema.prisma
+    models/
+      quiz.prisma
+      user.prisma
+```
+
+Point `schema.path` at the folder. Every `.prisma` file under it is read
+recursively and concatenated before parsing, which is what lets a relation
+declared in one file resolve against a model in another:
+
+```ts
+db: prismaAdapter({
+  prisma,
+  schema: { path: "./prisma/schema" },
+  internal: mongooseAdapter({ url: process.env.PAYLOAD_INTERNAL_URL! }),
+})
+```
+
+A list works too, for a layout that is neither: `path: ["./prisma/base.prisma",
+"./prisma/models"]`.
+
+With no `schema` at all the adapter looks for `./prisma/schema.prisma` and then
+`./prisma/schema`, so both standard layouts need no configuration.
+
 ## 4. Add an admin collection
 
 Payload needs somewhere to keep the accounts that log in. Give it a collection

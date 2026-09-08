@@ -16,12 +16,13 @@ import type {
 } from "payload";
 import { APIError, ValidationError } from "payload";
 
-import type { ModelMapping } from "./mapping/types.js";
+import type { JoinFieldMapping, ModelMapping } from "./mapping/types.js";
+import type { PrismaOrderBy } from "./query/sort.js";
 import { buildOrderBy } from "./query/sort.js";
 import type { PrismaWhere } from "./query/where.js";
 import { buildWhere, mergeWhere } from "./query/where.js";
 import { coercePrimaryKey } from "./schema/coerce.js";
-import { buildInclude, toPayloadDoc } from "./transform/read.js";
+import { buildInclude, toJoinPage, toPayloadDoc } from "./transform/read.js";
 import type { PrismaRow } from "./transform/read.js";
 import { buildData } from "./transform/write.js";
 
@@ -99,6 +100,34 @@ function requireGlobal(context: PrismaContext, slug: string): ModelMapping {
   return mapping;
 }
 
+/**
+ * Refuses a create the schema has already made impossible.
+ *
+ * A non-null column with no default and no field pointing at it means every
+ * `create` fails. Prisma's own error names the column but neither the config nor
+ * the missing mapping, and the adapter knew this at startup, where it logs a
+ * warning. This is the same fact, raised where a save can show it.
+ *
+ * @param mapping - The collection's or global's mapping.
+ * @throws {APIError} When a column cannot be filled in.
+ */
+function assertCreatable(mapping: ModelMapping): void {
+  const missing = mapping.uncreatable;
+  if (missing.length === 0) return;
+
+  const one = missing.length === 1;
+  throw new APIError(
+    `[prisma-adapter] ${mapping.kind === "global" ? "Global" : "Collection"} ` +
+      `"${mapping.slug}" cannot create a row. ` +
+      `${missing.map((column) => `"${mapping.model}.${column}"`).join(", ")} ` +
+      `${one ? "is" : "are"} non-null in schema.prisma with no default, and no field in the ` +
+      `${mapping.kind} writes ${one ? "it" : "them"}.\n` +
+      `Add a field for each, give the column a default, or make it optional. The adapter ` +
+      `issues no DDL, so it cannot fill one in.`,
+    500,
+  );
+}
+
 /** Resolves the delegate for a mapping, or explains why it is missing. */
 function delegate(context: PrismaContext, mapping: ModelMapping): PrismaDelegate {
   const found = (context.prisma as Record<string, unknown>)[mapping.delegate];
@@ -113,10 +142,143 @@ function delegate(context: PrismaContext, mapping: ModelMapping): PrismaDelegate
   return found as unknown as PrismaDelegate;
 }
 
-/** The read arguments every query shares. */
-function readArgs(mapping: ModelMapping): { include?: Record<string, unknown> } {
-  const include = buildInclude({ mapping });
-  return include === undefined ? {} : { include };
+/**
+ * One join field's query, as Payload's `joins` argument carries it.
+ *
+ * Restated because `payload` types `JoinQuery` as a mapped type over the
+ * generated collection slugs, which resolves to `never` in a package that has
+ * no generated types.
+ */
+interface JoinFieldQuery {
+  count?: boolean;
+  limit?: number;
+  page?: number;
+  sort?: Sort;
+  where?: Where;
+}
+
+/** A join mapping resolved against one request: the page it asked for. */
+interface RequestedJoin {
+  join: JoinFieldMapping;
+  /** Rows per page. `0` is Payload's spelling of "every row". */
+  limit: number;
+  page: number;
+  /** Whether the caller asked for `totalDocs`, which costs a count. */
+  count: boolean;
+  where: PrismaWhere | undefined;
+  orderBy: PrismaOrderBy[];
+}
+
+/**
+ * Resolves Payload's `joins` argument against a collection's join mappings.
+ *
+ * @param props - Input props.
+ * @param props.context - The Prisma context.
+ * @param props.mapping - The collection being read.
+ * @param props.joins - Payload's `joins` argument, unnarrowed.
+ * @returns One entry per join the caller asked for, empty when it asked for none.
+ */
+function requestedJoins(props: {
+  context: PrismaContext;
+  mapping: ModelMapping;
+  joins: unknown;
+}): RequestedJoin[] {
+  const { context, mapping, joins } = props;
+  if (mapping.joins.size === 0) return [];
+  // `false` rather than an object turns every join off, which is what a GraphQL
+  // request sends.
+  if (joins === false || joins === null || typeof joins !== "object") return [];
+
+  const requested: RequestedJoin[] = [];
+  for (const [path, query] of Object.entries(joins as Record<string, unknown>)) {
+    const join = mapping.joins.get(path);
+    // `false` for one path is how access control says this caller may not read it.
+    if (join === undefined || query === false || query === null || query === undefined) continue;
+    const asked = (typeof query === "object" ? query : {}) as JoinFieldQuery;
+
+    requested.push({
+      join,
+      limit: asked.limit ?? join.defaultLimit,
+      page: asked.page ?? 1,
+      count: asked.count === true,
+      // Payload merges the field's own `where` in before the adapter sees it,
+      // but `payload.db.find` can be called directly. ANDing it with itself
+      // changes nothing, so it is applied rather than trusted.
+      where: mergeWhere(
+        buildWhere({ where: join.where, mapping: join.target, byModel: context.byModel }),
+        buildWhere({ where: asked.where, mapping: join.target, byModel: context.byModel }),
+      ),
+      orderBy: buildOrderBy({
+        sort: asked.sort ?? join.defaultSort,
+        mapping: join.target,
+        byModel: context.byModel,
+      }),
+    });
+  }
+  return requested;
+}
+
+/**
+ * The read arguments every query shares.
+ *
+ * Joins ride along on the parent's own read rather than becoming one query per
+ * row: a nested `include` takes `where`, `orderBy`, `skip` and `take`, so each
+ * parent gets its own correctly paginated page out of a single round trip.
+ *
+ * @param mapping - The collection's mapping.
+ * @param joins - The joins this request asked for.
+ * @returns The `include`, or nothing when there is neither a relation nor a join.
+ */
+function readArgs(
+  mapping: ModelMapping,
+  joins: RequestedJoin[] = [],
+): { include?: Record<string, unknown> } {
+  const include: Record<string, unknown> = { ...buildInclude({ mapping }) };
+  const counted: Record<string, unknown> = {};
+
+  for (const { count, join, limit, orderBy, page, where } of joins) {
+    include[join.prismaField] = {
+      select: { [join.target.idField.name]: true },
+      orderBy,
+      ...(where !== undefined ? { where } : {}),
+      // One row more than the page, so `hasNextPage` needs no second query.
+      ...(limit > 0 ? { skip: (page - 1) * limit, take: limit + 1 } : {}),
+    };
+    // Filtered the same way the page is, or the total would not describe it.
+    if (count) counted[join.prismaField] = where !== undefined ? { where } : true;
+  }
+
+  if (Object.keys(counted).length > 0) include._count = { select: counted };
+  return Object.keys(include).length === 0 ? {} : { include };
+}
+
+/**
+ * Moves the joined rows off a Prisma row and onto the Payload document.
+ *
+ * @param props - Input props.
+ * @param props.row - The row Prisma returned, carrying the included children.
+ * @param props.doc - The document to fill in, modified in place.
+ * @param props.joins - The joins this request asked for.
+ * @returns The same document.
+ */
+function withJoins(props: {
+  row: PrismaRow;
+  doc: Record<string, unknown>;
+  joins: RequestedJoin[];
+}): Record<string, unknown> {
+  const { row, doc, joins } = props;
+  if (joins.length === 0) return doc;
+
+  const counts = (row._count ?? {}) as Record<string, unknown>;
+  for (const { join, limit, count } of joins) {
+    doc[join.path] = toJoinPage({
+      rows: row[join.prismaField],
+      idKey: join.target.idField.name,
+      limit,
+      ...(count ? { total: counts[join.prismaField] } : {}),
+    });
+  }
+  return doc;
 }
 
 /**
@@ -189,6 +351,7 @@ export async function find(context: PrismaContext, args: FindArgs): Promise<Pagi
 
   const filter = where(context, mapping, args.where);
   const orderBy = buildOrderBy({ sort: args.sort, mapping, byModel: context.byModel });
+  const joins = requestedJoins({ context, mapping, joins: args.joins });
 
   const limit = args.limit ?? 10;
   const page = args.page ?? 1;
@@ -197,7 +360,7 @@ export async function find(context: PrismaContext, args: FindArgs): Promise<Pagi
   const unpaginated = args.pagination === false || limit === 0;
 
   const query: Record<string, unknown> = {
-    ...readArgs(mapping),
+    ...readArgs(mapping, joins),
     orderBy,
     ...(filter !== undefined ? { where: filter } : {}),
     ...(unpaginated ? {} : { skip: (page - 1) * limit, take: limit }),
@@ -205,7 +368,7 @@ export async function find(context: PrismaContext, args: FindArgs): Promise<Pagi
 
   try {
     const rows = await model.findMany(query);
-    const docs = rows.map((row) => toPayloadDoc({ row, mapping }));
+    const docs = rows.map((row) => withJoins({ row, doc: toPayloadDoc({ row, mapping }), joins }));
 
     if (unpaginated) {
       return {
@@ -256,13 +419,14 @@ export async function findOne(
   const mapping = require_(context, args.collection);
   const model = delegate(context, mapping);
   const filter = where(context, mapping, args.where);
+  const joins = requestedJoins({ context, mapping, joins: args.joins });
 
   try {
     const row = await model.findFirst({
-      ...readArgs(mapping),
+      ...readArgs(mapping, joins),
       ...(filter !== undefined ? { where: filter } : {}),
     });
-    return row === null ? null : toPayloadDoc({ row, mapping });
+    return row === null ? null : withJoins({ row, doc: toPayloadDoc({ row, mapping }), joins });
   } catch (error) {
     return rethrow(error, mapping);
   }
@@ -360,6 +524,7 @@ export async function findDistinct(
 export async function create(context: PrismaContext, args: CreateArgs): Promise<Document> {
   const mapping = require_(context, args.collection);
   const model = delegate(context, mapping);
+  assertCreatable(mapping);
 
   const data = buildData({
     data: args.customID === undefined ? args.data : { ...args.data, id: args.customID },
@@ -386,6 +551,7 @@ export async function updateOne(context: PrismaContext, args: UpdateOneArgs): Pr
   const mapping = require_(context, args.collection);
   const model = delegate(context, mapping);
   const data = buildData({ data: args.data, mapping, mode: "update" });
+  const joins = requestedJoins({ context, mapping, joins: args.joins });
 
   try {
     // Prisma's `update` takes a unique `where`, so a query-shaped update has to
@@ -406,11 +572,11 @@ export async function updateOne(context: PrismaContext, args: UpdateOneArgs): Pr
           })();
 
     const row = await model.update({
-      ...readArgs(mapping),
+      ...readArgs(mapping, joins),
       where: { [mapping.idField.name]: id },
       data,
     });
-    return toPayloadDoc({ row, mapping });
+    return withJoins({ row, doc: toPayloadDoc({ row, mapping }), joins });
   } catch (error) {
     return rethrow(error, mapping);
   }
@@ -431,6 +597,7 @@ export async function updateMany(
   const model = delegate(context, mapping);
   const filter = where(context, mapping, args.where);
   const data = buildData({ data: args.data, mapping, mode: "update" });
+  const joins = requestedJoins({ context, mapping, joins: args.joins });
 
   try {
     // Prisma's `updateMany` takes no nested relation writes, so the rows are
@@ -446,11 +613,13 @@ export async function updateMany(
     const updated: Document[] = [];
     for (const row of rows) {
       const result = await model.update({
-        ...readArgs(mapping),
+        ...readArgs(mapping, joins),
         where: { [mapping.idField.name]: row[mapping.idField.name] },
         data,
       });
-      if (args.returning !== false) updated.push(toPayloadDoc({ row: result, mapping }));
+      if (args.returning !== false) {
+        updated.push(withJoins({ row: result, doc: toPayloadDoc({ row: result, mapping }), joins }));
+      }
     }
     return args.returning === false ? null : updated;
   } catch (error) {
@@ -483,6 +652,7 @@ export async function upsert(context: PrismaContext, args: UpsertArgs): Promise<
       collection: args.collection,
       data: args.data,
       id: existing[mapping.idField.name] as number | string,
+      ...(args.joins !== undefined ? { joins: args.joins } : {}),
     });
   } catch (error) {
     return rethrow(error, mapping);
@@ -586,6 +756,7 @@ export async function createGlobal(
 ): Promise<Document> {
   const mapping = requireGlobal(context, args.slug);
   const model = delegate(context, mapping);
+  assertCreatable(mapping);
 
   const data = buildData({ data: args.data, mapping, mode: "create" });
 

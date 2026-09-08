@@ -39,6 +39,48 @@ appear to work, save without error, and change nothing.
 
 That is the worst kind of bug: it looks like a feature that works.
 
+### A to-many whose children cannot be detached
+
+`set` has a cost. It disconnects everything the editor removed, and on a
+one-to-many that means writing NULL into the child's foreign key:
+
+```prisma
+model QuizQuestion {
+  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  quizId String            // NOT NULL
+}
+```
+
+Mapping `Quiz.questions` as a writable `relationship hasMany` works for as long
+as nobody removes anything, then fails with `would violate the required
+relation`. Prisma's generated types allow `set` on the required side, so nothing
+catches it until runtime.
+
+Everything needed to see this is in `schema.prisma`, so the adapter refuses it at
+startup and names the three ways out:
+
+```
+[prisma-adapter] Collection "quizzes" field "questions" is a to-many
+relationship over "Quiz.questions", and a Payload update writes the whole set at
+once, which disconnects every row the editor removed.
+That means writing NULL into "QuizQuestion.quizId", which is non-null in
+schema.prisma, so the first removal fails at the database with "would violate
+the required relation". Adding works until then, which is why this is a startup
+error.
+Pick one:
+  • `type: "join", collection: "…", on: "quiz"` instead of the relationship,
+    which reads the children and never writes the set.
+  • `custom: { prisma: { readOnly: true } }` on the field, to read the set and
+    never write it.
+  • make "QuizQuestion.quizId" optional in schema.prisma.
+```
+
+A [join field](./joins.md) is usually the right answer. It is what the parent
+side of a one-to-many actually is.
+
+An implicit many-to-many is unaffected: a removal there is a row leaving the
+join table, and nothing is ever set to NULL.
+
 ### Clearing a to-one
 
 `null` on an update becomes `disconnect: true`. On a create it is dropped,
@@ -70,6 +112,26 @@ include: { tags: { select: { id: true } } }
 The id is all a Payload relationship field holds. Payload populates the rest
 itself, above the adapter, through its own data loader. Fetching whole rows here
 would be work thrown away.
+
+### Ordering an included to-many
+
+Without an `orderBy`, the database returns the included rows in whatever order it
+chose, which for a child table carrying its own `position` column is not the one
+the editor arranged. Name the order on the field:
+
+```ts
+{
+  name: "questions",
+  type: "relationship",
+  relationTo: "quiz-questions",
+  hasMany: true,
+  custom: { prisma: { readOnly: true, orderBy: { position: "asc" } } },
+}
+```
+
+It names columns on the **target** model, takes one object or a list of them, and
+is checked at startup against that model's columns. A [join
+field](./joins.md) uses Payload's own `defaultSort` instead.
 
 ## Two relations to the same model
 

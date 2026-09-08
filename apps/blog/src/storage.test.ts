@@ -308,6 +308,135 @@ describe("relationships", () => {
   });
 });
 
+describe("join fields", () => {
+  /** An organization with `count` members, named so their sort order is known. */
+  async function anOrganization(label: string, count: number) {
+    const suffix = `${label}-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    const organization = await payload.create({
+      collection: "organizations",
+      data: { name: `Org ${suffix}` },
+    });
+
+    const members = [];
+    for (let index = 0; index < count; index += 1) {
+      const name = `${suffix}-member-${index}`;
+      members.push(
+        await payload.create({
+          collection: "authors",
+          data: { email: `${name}@example.com`, name, organization: organization.id },
+        }),
+      );
+    }
+    return { members, organization };
+  }
+
+  it("reads the children from the parent's side", async () => {
+    const { members, organization } = await anOrganization("Read", 2);
+
+    const reread = await payload.findByID({
+      collection: "organizations",
+      depth: 0,
+      id: organization.id,
+    });
+
+    expect(reread.members?.docs).toEqual(members.map((member) => member.id));
+  });
+
+  it("reads only the children pointing at this parent", async () => {
+    const { organization } = await anOrganization("Mine", 1);
+    const other = await anOrganization("Theirs", 1);
+
+    const reread = await payload.findByID({
+      collection: "organizations",
+      depth: 0,
+      id: organization.id,
+    });
+
+    expect(reread.members?.docs).toHaveLength(1);
+    expect(reread.members?.docs).not.toContain(other.members[0]?.id);
+  });
+
+  it("applies the field's `defaultSort`", async () => {
+    const { members, organization } = await anOrganization("Sorted", 3);
+
+    const reread = await payload.findByID({
+      collection: "organizations",
+      depth: 0,
+      id: organization.id,
+      joins: { members: { sort: "-name" } },
+    });
+
+    expect(reread.members?.docs).toEqual([...members].reverse().map((member) => member.id));
+  });
+
+  it("pages with the field's `defaultLimit` and reports another page", async () => {
+    const { organization } = await anOrganization("Paged", 6);
+
+    const first = await payload.findByID({
+      collection: "organizations",
+      depth: 0,
+      id: organization.id,
+    });
+    expect(first.members?.docs).toHaveLength(5);
+    expect(first.members?.hasNextPage).toBe(true);
+
+    const second = await payload.findByID({
+      collection: "organizations",
+      depth: 0,
+      id: organization.id,
+      joins: { members: { page: 2 } },
+    });
+    expect(second.members?.docs).toHaveLength(1);
+    expect(second.members?.hasNextPage).toBe(false);
+  });
+
+  it("filters and counts the children", async () => {
+    const { members, organization } = await anOrganization("Filtered", 3);
+
+    const reread = await payload.findByID({
+      collection: "organizations",
+      depth: 0,
+      id: organization.id,
+      joins: { members: { count: true, where: { name: { equals: members[0]?.name } } } },
+    });
+
+    expect(reread.members?.docs).toHaveLength(1);
+    // The count is filtered too, or the total would not describe the page.
+    expect(reread.members?.totalDocs).toBe(1);
+  });
+
+  it("gives each parent its own page on a list view", async () => {
+    // The reason a join is a nested read rather than one flat query over every
+    // parent: a flat query can only paginate the pile.
+    const many = await anOrganization("ListMany", 6);
+    const few = await anOrganization("ListFew", 1);
+
+    const page = await payload.find({
+      collection: "organizations",
+      depth: 0,
+      where: { id: { in: [many.organization.id, few.organization.id] } },
+    });
+
+    const byId = new Map(page.docs.map((doc) => [doc.id, doc]));
+    expect(byId.get(many.organization.id)?.members?.docs).toHaveLength(5);
+    expect(byId.get(few.organization.id)?.members?.docs).toHaveLength(1);
+  });
+
+  it("populates the joined documents at depth", async () => {
+    const { members, organization } = await anOrganization("Populated", 1);
+
+    const reread = await payload.findByID({
+      collection: "organizations",
+      depth: 1,
+      id: organization.id,
+    });
+
+    // The adapter returns ids; Payload's own `afterRead` turns them into
+    // documents, the same as for a relationship.
+    expect(reread.members?.docs?.[0]).toMatchObject({ name: members[0]?.name });
+  });
+});
+
 describe("plugins", () => {
   it("runs an official Payload plugin on a Prisma-backed collection", async () => {
     const author = await anAuthor("Seo");

@@ -10,22 +10,25 @@
  * @packageDocumentation
  */
 
-export { describeStorage, prismaAdapter } from "./adapter.js";
+export { describeStorage, PrismaAdapterIdTypeError, prismaAdapter } from "./adapter.js";
 export type { PrismaAdapterArgs } from "./adapter.js";
 
 export {
   buildCollectionMapping,
   buildGlobalMapping,
+  buildJoinMappings,
   buildMappings,
   buildModelMapping,
   PrismaAdapterMappingError,
 } from "./mapping/build.js";
 export type {
   FieldMapping,
+  JoinFieldMapping,
   ModelMapping,
   PrismaFieldMapping,
   PrismaGlobalMapping,
   PrismaModelMapping,
+  PrismaOrderByInput,
   RelationFieldMapping,
   ScalarFieldMapping,
 } from "./mapping/types.js";

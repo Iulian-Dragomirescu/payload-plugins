@@ -1,0 +1,40 @@
+// Parent to children, the shape an existing schema is full of.
+//
+// The child holds the foreign key and it is NOT NULL, with a cascade, because
+// a question without a quiz is not a thing. That combination is what makes the
+// parent side a `join` rather than a `relationship`.
+
+model Quiz {
+  id    String @id @default(cuid())
+  title String
+
+  /// The parent side of a one-to-many. Nothing about it is stored here.
+  ///
+  /// Named, because a second relation to `QuizQuestion` follows and Prisma
+  /// requires a name on BOTH as soon as two relations connect the same pair of
+  /// models. It is also how the adapter pairs the two sides up.
+  questions QuizQuestion[] @relation("QuizQuestions")
+
+  /// A second relation to the same model, so `on` has real work to do.
+  archived QuizQuestion[] @relation("QuizArchive")
+}
+
+model QuizQuestion {
+  id     String @id @default(cuid())
+  prompt String
+
+  /// The column an editor drags rows into. Without an order, "the questions of
+  /// this quiz" is a set rather than a list.
+  position Int @default(0)
+
+  hidden Boolean @default(false)
+
+  /// NOT NULL. A `set` from the parent side would write NULL here, which the
+  /// database refuses, so mapping `Quiz.questions` as a writable
+  /// `relationship hasMany` is a startup error. See ../relationships.
+  quiz   Quiz   @relation("QuizQuestions", fields: [quizId], references: [id], onDelete: Cascade)
+  quizId String
+
+  archivedFrom   Quiz?   @relation("QuizArchive", fields: [archivedFromId], references: [id])
+  archivedFromId String?
+}

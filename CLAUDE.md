@@ -105,7 +105,21 @@ src/
   covers `cuid()`, `uuid()`, `Int` and `BigInt`. Coercion back to the real type
   happens at the database boundary.
 - **A to-many update writes `set`, not `connect`.** `connect` only ever adds, so
-  removing a tag in the admin panel would silently do nothing.
+  removing a tag in the admin panel would silently do nothing. The cost is that
+  a to-many whose child holds a non-null foreign key cannot be written at all,
+  which the mapper refuses at boot rather than at the first removal.
+- **`join` fields are resolved in a second pass, not with the rest.** A join
+  names another collection, which may not have been mapped yet, and everything
+  about it comes from the CHILD's mapping. They live in `mapping.joins`, apart
+  from `fields`, because a join is a query rather than a column.
+- **A join reads as a nested `include` on the parent's own query.** One flat
+  query keyed on parent ids can only paginate the pile, so on a list view the
+  first parent would get every row and the rest none. `take` is `limit + 1`, so
+  `hasNextPage` costs no second query.
+- **The adapter writes `customIDType` onto `payload.collections`.** Payload keeps
+  one `db.defaultIDType` for the whole config and this adapter answers `"text"`,
+  so an internal adapter with numeric ids has every id it stores rejected. It
+  surfaces as blank admin lists and a validation error naming "User".
 - **Dates leave the adapter as ISO strings.** A live `Date` survives a read but
   not the deep copy Payload takes before an update.
 - **A NULL column for a `group` field is dropped, not returned as null.** Payload

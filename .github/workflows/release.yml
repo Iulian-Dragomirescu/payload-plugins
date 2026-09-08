@@ -100,8 +100,11 @@ jobs:
 
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
+      # Trailing dots are the package's own workspace dependencies. Leading
+      # dots would be its dependents, which drags in apps/blog and a Prisma
+      # client that only exists after `prisma generate`.
       - name: Build
-        run: pnpm --filter "...${{ steps.tag.outputs.name }}" build
+        run: pnpm --filter "${{ steps.tag.outputs.name }}..." build
 
       - name: Typecheck
         run: pnpm --filter "${{ steps.tag.outputs.name }}" typecheck

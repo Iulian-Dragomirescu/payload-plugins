@@ -78,7 +78,11 @@ export interface Config {
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
   };
-  collectionsJoins: {};
+  collectionsJoins: {
+    organizations: {
+      members: 'authors';
+    };
+  };
   collectionsSelect: {
     posts: PostsSelect<false> | PostsSelect<true>;
     authors: AuthorsSelect<false> | AuthorsSelect<true>;
@@ -176,6 +180,10 @@ export interface Author {
    * Read from the other side of the relation. Edit it on the post.
    */
   posts?: (string | Post)[] | null;
+  /**
+   * Posts this author reviewed, newest first.
+   */
+  reviewed?: (string | Post)[] | null;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -184,6 +192,11 @@ export interface Author {
 export interface Organization {
   id: string;
   name: string;
+  members?: {
+    docs?: (string | Author)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -358,6 +371,7 @@ export interface AuthorsSelect<T extends boolean = true> {
   role?: T;
   organization?: T;
   posts?: T;
+  reviewed?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -372,6 +386,7 @@ export interface TagsSelect<T extends boolean = true> {
  */
 export interface OrganizationsSelect<T extends boolean = true> {
   name?: T;
+  members?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

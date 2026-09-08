@@ -32,6 +32,16 @@ export default buildConfig({
     meta: {
       titleSuffix: " · Payload on Prisma",
     },
+    // `baseDir` is what the leading slash in a component path is relative to.
+    // It defaults to `process.cwd()`, and this app's code is under `src`.
+    importMap: {
+      baseDir: dirname,
+    },
+    components: {
+      // A button that runs a server action reading authors with their joins.
+      // See `src/actions/callNested.ts`.
+      beforeDashboard: ["/components/CallNested#CallNested"],
+    },
   },
 
   collections: [Posts, Authors, Tags, Organizations, People, Admins],

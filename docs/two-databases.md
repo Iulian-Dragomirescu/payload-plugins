@@ -91,6 +91,62 @@ up the same way. Either is fine. The split is identical.
 Point the internal adapter at the same database as your Prisma schema and you
 have given up the guarantee this package exists for.
 
+### Id types have to agree
+
+Payload keeps ONE `db.defaultIDType` for the whole config, and this adapter is
+what answers it. It answers `"text"`, because ids are strings above the adapter
+whatever the column type. See [ADR 0003](./adr/0003-ids-are-strings.md).
+
+`postgresAdapter` without `idType` uses `serial`, so the collections it stores
+have NUMERIC ids. Payload then validates a relationship as
+
+```ts
+collections[slug].customIDType || db.defaultIDType   // "text"
+```
+
+and rejects every numeric id it is given. What that looks like is not an id
+error. `payload-preferences.user` fails validation on every list view, so the
+admin panel cannot save its column state and **every list comes back blank**,
+with a message naming a field called "User".
+
+The adapter settles this at startup. It sets `customIDType` on the collections
+routed to the internal adapter, which Payload consults ahead of
+`db.defaultIDType`, and logs one line saying it did:
+
+```
+[prisma-adapter] The internal adapter stores number ids and this adapter reports
+text, so `customIDType: "number"` was set on the 6 collections it stores.
+```
+
+Two other settings, if you would rather it did not:
+
+```ts
+prismaAdapter({ …, idTypeMismatch: "error" })    // refuse to start, naming both types
+prismaAdapter({ …, idTypeMismatch: "ignore" })   // leave it alone
+```
+
+The other way out is giving the internal adapter text ids in the first place,
+which is one line and avoids the question:
+
+```ts
+internal: postgresAdapter({ idType: "uuid", pool: { connectionString: … } })
+```
+
+### Empty tables for mapped collections
+
+The internal adapter is handed the whole config, so an adapter in push mode
+materialises storage for the Prisma-backed collections too. Those tables are
+never read, but they are there.
+
+They have a job: versions, drafts, document locks and admin preferences for a
+mapped collection are all stored internally, and the adapter can only do that if
+it knows the collection exists. If your mapped collections have none of those,
+hide them:
+
+```ts
+prismaAdapter({ …, internalCollections: "unmapped" })
+```
+
 ## One connection to your database
 
 The adapter opens no connection of its own. It reads the datamodel from

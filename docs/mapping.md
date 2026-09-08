@@ -16,6 +16,7 @@ There is no wrapper function and no fork.
 | `field` | field | Which column backs this field. Defaults to the field's name. |
 | `foreignKey` | relationship | Which foreign key this relation travels over. |
 | `readOnly` | field | Read this column, never write it. |
+| `orderBy` | to-many relationship | Which order its rows come back in. See [Relationships](./relationships.md#ordering-an-included-to-many). |
 | `where` | global | Which row of the table this global is. See [Globals](./globals.md). |
 
 Only `model` is required, and most fields need nothing at all.
@@ -111,11 +112,15 @@ A NULL in that column reads back as absent rather than as `null`, because Payloa
 fills an absent group with `{}` so hooks inside it can run, and treats a literal
 `null` there as a crash.
 
-### What is skipped
+### What is not a column
 
-`join` fields are Payload's reverse lookups, computed from the other side rather
-than stored. Fields marked `virtual` are populated by hooks. Neither is looked
-for in the schema.
+`join` fields are reverse lookups: nothing is stored on this model, and the rows
+are found by querying the child. They are resolved against the child collection's
+mapping instead, in a second pass, and are covered in [Join
+fields](./joins.md).
+
+Fields marked `virtual` are populated by hooks, and are not looked for in the
+schema at all.
 
 ## Startup errors
 
@@ -161,5 +166,6 @@ The value of `model` is still a string, and only the startup check can verify it
 
 ## Related
 
-* [Relationships](./relationships.md) covers `foreignKey` in depth.
+* [Relationships](./relationships.md) covers `foreignKey` and `orderBy` in depth.
+* [Join fields](./joins.md) covers reading a parent's children.
 * [Globals](./globals.md) covers `where`.
