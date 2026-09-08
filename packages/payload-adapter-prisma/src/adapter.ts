@@ -166,6 +166,57 @@ function reconcileIdTypes(props: {
 }
 
 /**
+ * Declares, on each mapped collection, that its id is text.
+ *
+ * `defaultIDType` answers "what shape are ids in this config", and Payload keeps
+ * ONE of those. The per-collection answer is an `id` field in the config, and
+ * that is what everything else reads:
+ *
+ * - Payload derives `collections[slug].customIDType` from it, at startup.
+ * - `@payloadcms/db-mongodb` reads it directly to decide whether to cast a
+ *   relationship's value to an `ObjectId`.
+ *
+ * Without it the internal adapter meets a cuid where its own ids are ObjectIds
+ * and throws from inside BSON. It surfaces when the admin panel takes a lock on
+ * a saved document, so editing a Prisma-backed document fails while creating one
+ * works, and nothing in the error names a collection or an adapter.
+ *
+ * Text whatever the column is, because ids are strings above this adapter and
+ * are coerced back at the database boundary.
+ *
+ * @param props - Input props.
+ * @param props.payload - The initializing Payload instance.
+ * @param props.mappings - The Prisma-backed collections.
+ */
+function declareIdFields(props: {
+  payload: Payload;
+  mappings: Map<string, ModelMapping>;
+}): void {
+  const { payload, mappings } = props;
+
+  for (const collection of payload.config.collections) {
+    if (!mappings.has(collection.slug)) continue;
+    // A config declaring its own `id` has already said this, and said it first.
+    if (collection.fields.some((field) => "name" in field && field.name === "id")) continue;
+
+    const id = {
+      name: "id",
+      type: "text" as const,
+      // The database supplies it. Rendering an input for a value nobody may
+      // type would be a field that only ever fails.
+      admin: { disableBulkEdit: true, hidden: true },
+    };
+    collection.fields.push(id);
+    collection.flattenedFields.push(id);
+
+    // Payload builds this registry before `db.init`, so the field alone is too
+    // late for it.
+    const entry = payload.collections[collection.slug];
+    if (entry !== undefined) entry.customIDType = ADAPTER_ID_TYPE;
+  }
+}
+
+/**
  * Hides the Prisma-backed collections from the internal adapter.
  *
  * A Proxy over `payload` rather than a copy: the internal adapter keeps the one
@@ -267,6 +318,9 @@ export function prismaAdapter(args: PrismaAdapterArgs): DatabaseAdapterObj {
         datamodel,
       });
 
+      // Both halves of the same problem, and both have to run before the
+      // internal adapter initializes: it reads the config it is handed.
+      declareIdFields({ payload, mappings });
       reconcileIdTypes({
         payload,
         mappings,

@@ -57,7 +57,7 @@ relation`. Prisma's generated types allow `set` on the required side, so nothing
 catches it until runtime.
 
 Everything needed to see this is in `schema.prisma`, so the adapter refuses it at
-startup and names the three ways out:
+startup and names the ways out:
 
 ```
 [prisma-adapter] Collection "quizzes" field "questions" is a to-many
@@ -68,6 +68,10 @@ schema.prisma, so the first removal fails at the database with "would violate
 the required relation". Adding works until then, which is why this is a startup
 error.
 Pick one:
+  • `type: "array", custom: { prisma: { order: "…" } }` with the child's
+    fields, if "QuizQuestion" rows belong to this collection. An array deletes
+    a removed row instead of detaching it, so a non-null foreign key is no
+    obstacle.
   • `type: "join", collection: "…", on: "quiz"` instead of the relationship,
     which reads the children and never writes the set.
   • `custom: { prisma: { readOnly: true } }` on the field, to read the set and
@@ -75,8 +79,9 @@ Pick one:
   • make "QuizQuestion.quizId" optional in schema.prisma.
 ```
 
-A [join field](./joins.md) is usually the right answer. It is what the parent
-side of a one-to-many actually is.
+Which of the first two depends on who owns the rows. An [array](./arrays.md)
+edits them from the parent's form; a [join field](./joins.md) reads them while
+they stay a collection of their own.
 
 An implicit many-to-many is unaffected: a removal there is a row leaving the
 join table, and nothing is ever set to NULL.

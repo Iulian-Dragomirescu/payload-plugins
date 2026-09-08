@@ -1,6 +1,6 @@
 {
   "name": "payload-adapter-prisma",
-  "version": "0.2.0-rc.1",
+  "version": "0.2.0-rc.2",
   "description": "Payload CMS database adapter for an existing Prisma schema. Payload keeps its own state in a second database, yours stays exactly as Prisma wrote it.",
   "keywords": [
     "payload",

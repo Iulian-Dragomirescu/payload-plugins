@@ -31,6 +31,7 @@ function internalAdapter(defaultIDType: "number" | "text"): DatabaseAdapterObj {
 function payloadWith(props: { slugs: { slug: string; mapped?: boolean; customIDType?: string }[] }) {
   const collections = props.slugs.map((entry) => ({
     slug: entry.slug,
+    fields: [{ name: "title", type: "text" }],
     flattenedFields: [{ name: "title", type: "text" }],
     ...(entry.mapped === true ? { custom: { prisma: { model: "BlogPost" } } } : {}),
   }));
@@ -87,9 +88,59 @@ describe("id types across the two databases", () => {
     expect(payload.collections["payload-preferences"]?.customIDType).toBe("number");
   });
 
-  it("leaves the mapped collections alone, whose ids really are text", () => {
+  it("never gives a mapped collection the internal adapter's id type", () => {
     const payload = init({ internalIDType: "number" });
-    expect(payload.collections.posts?.customIDType).toBeUndefined();
+    expect(payload.collections.posts?.customIDType).toBe("text");
+  });
+
+  it("declares an `id` field on every mapped collection", () => {
+    // The per-collection answer to "what shape is an id". Payload derives
+    // `customIDType` from it, and `@payloadcms/db-mongodb` reads it to decide
+    // whether to cast a relationship's value to an ObjectId. Without it a lock
+    // on a saved document throws from inside BSON.
+    const payload = init({ internalIDType: "text" });
+    const posts = payload.config.collections.find((entry) => entry.slug === "posts");
+
+    expect(posts?.fields).toContainEqual(
+      expect.objectContaining({ name: "id", type: "text" }),
+    );
+    expect(payload.collections.posts?.customIDType).toBe("text");
+  });
+
+  it("hides the field it declares, since the database supplies the value", () => {
+    const payload = init({ internalIDType: "text" });
+    const id = payload.config.collections
+      .find((entry) => entry.slug === "posts")
+      ?.fields.find((field) => "name" in field && field.name === "id");
+
+    expect((id as { admin?: { hidden?: boolean } }).admin?.hidden).toBe(true);
+  });
+
+  it("declares nothing on the collections the internal adapter stores", () => {
+    // Their ids are the internal adapter's to shape, and saying "text" here
+    // would be the original bug with the sides swapped.
+    const payload = init({ internalIDType: "number" });
+    const admins = payload.config.collections.find((entry) => entry.slug === "admins");
+
+    expect(admins?.fields).not.toContainEqual(expect.objectContaining({ name: "id" }));
+  });
+
+  it("leaves a collection that declares its own `id` alone", () => {
+    const payload = payloadWith({ slugs: [{ mapped: true, slug: "posts" }] });
+    const posts = payload.config.collections[0] as unknown as { fields: unknown[] };
+    posts.fields.push({ name: "id", type: "number" });
+
+    prismaAdapter({
+      prisma: {},
+      internal: internalAdapter("text"),
+      schema: { datamodel },
+    }).init({ payload });
+
+    // One `id`, still the config's own. Declaring it is the config's call and
+    // it made it first.
+    expect(posts.fields.filter((field) => (field as { name: string }).name === "id")).toEqual([
+      { name: "id", type: "number" },
+    ]);
   });
 
   it("says what it did and why", () => {

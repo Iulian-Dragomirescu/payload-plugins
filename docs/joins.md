@@ -71,6 +71,17 @@ See [Relationships](./relationships.md#a-to-many-whose-children-cannot-be-detach
 
 A join reads. There is no set to replace, so there is nothing that can fail.
 
+## Why not an `array`
+
+Both read a parent's children, and the difference is who owns them.
+
+An [array](./arrays.md) edits the rows from the parent's form and deletes the
+ones the editor removes. The rows stop being a collection: no list view, no
+access control, no hooks of their own.
+
+A join leaves them a collection and only reads them. Use it when the children are
+documents in their own right, an array when they are parts of the parent.
+
 ## What it costs
 
 One query. The children come back on the parent's own read, as a nested Prisma

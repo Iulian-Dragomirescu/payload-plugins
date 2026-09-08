@@ -112,6 +112,25 @@ src/
   names another collection, which may not have been mapped yet, and everything
   about it comes from the CHILD's mapping. They live in `mapping.joins`, apart
   from `fields`, because a join is a query rather than a column.
+- **An `array` is a child table when its Prisma field is a relation, and one
+  `Json` column when it is a column.** That gate is the whole compatibility
+  story: an array that worked before points at a column. Arrays live in
+  `mapping.arrays`, apart from `fields`, so `buildWhere` and `buildOrderBy`
+  cannot reach them.
+- **An array's incoming row id is a claim to check, never a key to write.** The
+  admin panel invents a client-side ObjectId for every new row
+  (`fieldReducer.js:141`), so an update reads the ids the parent actually holds
+  first and only trusts a match. The pre-read is a TREE, not a flat set: which
+  rows exist depends on which row you are inside.
+- **An array can write a to-many that a `relationship` cannot.** A removal is a
+  `deleteMany`, so nothing is set to NULL and a non-null child foreign key is
+  fine.
+- **The adapter declares a hidden `id` field on every mapped collection.**
+  `db.defaultIDType` is one value and there are two databases. The
+  per-collection answer is an `id` field, and `@payloadcms/db-mongodb` reads it
+  to decide whether to cast a relationship to an `ObjectId`. Without it a
+  document lock on a saved document throws from inside BSON, so editing fails
+  while creating works.
 - **A join reads as a nested `include` on the parent's own query.** One flat
   query keyed on parent ids can only paginate the pile, so on a list view the
   first parent would get every row and the rest none. `take` is `limit + 1`, so

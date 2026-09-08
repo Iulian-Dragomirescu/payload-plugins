@@ -30,6 +30,8 @@ const SCHEMA_TABLES = [
   "authors",
   "blog_posts",
   "organizations",
+  "post_sections",
+  "section_links",
   "site_settings",
   "tags",
   "users",
@@ -253,7 +255,11 @@ describe("relationships", () => {
       'SELECT "B" FROM "_PostToTag" WHERE "A" = $1 ORDER BY "B"',
       [post.id],
     );
-    expect(rows.map((row) => String(row.B))).toEqual([one.id, two.id].map(String).sort());
+    // Numerically on both sides: `tags.id` is an Int, so SQL orders 99 before
+    // 100 while a string sort does the opposite.
+    expect(rows.map((row) => Number(row.B))).toEqual(
+      [one.id, two.id].map(Number).sort((left, right) => left - right),
+    );
   });
 
   it("REPLACES a to-many on update, so removing actually removes", async () => {
@@ -434,6 +440,351 @@ describe("join fields", () => {
     // The adapter returns ids; Payload's own `afterRead` turns them into
     // documents, the same as for a relationship.
     expect(reread.members?.docs?.[0]).toMatchObject({ name: members[0]?.name });
+  });
+});
+
+describe("an internal row pointing at a Prisma document", () => {
+  it("locks a document without coercing its id", async () => {
+    // The admin panel takes a lock the moment you touch the form of a saved
+    // document, and the lock lives in the INTERNAL database. Its `document` is
+    // a polymorphic relationship at a Prisma-backed collection, so a Mongo
+    // internal adapter meets a cuid where it expects an ObjectId.
+    const author = await anAuthor("Locking");
+    const post = await aPost({ author: author.id });
+
+    await expect(
+      payload.db.create({
+        collection: "payload-locked-documents",
+        data: { document: { relationTo: "posts", value: post.id } },
+        req: undefined as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+});
+
+describe("array fields", () => {
+  /** The rows in `post_sections` for one post, in the order the column says. */
+  async function sectionsOf(postId: string) {
+    const { rows } = await sql.query<{ id: string; heading: string; order: number }>(
+      'SELECT id, heading, "order" FROM post_sections WHERE "postId" = $1 ORDER BY "order"',
+      [postId],
+    );
+    return rows;
+  }
+
+  /** A post carrying the given sections. */
+  async function aPostWithSections(headings: string[]) {
+    const author = await anAuthor("Sections");
+    return aPost({
+      author: author.id,
+      sections: headings.map((heading) => ({ heading })),
+    });
+  }
+
+  it("writes the rows into the child table, not into a Json column", async () => {
+    const post = await aPostWithSections(["Intro", "Body"]);
+
+    expect(await sectionsOf(post.id)).toMatchObject([
+      { heading: "Intro", order: 0 },
+      { heading: "Body", order: 1 },
+    ]);
+  });
+
+  it("reads the rows back in the column's order", async () => {
+    const post = await aPostWithSections(["Intro", "Body", "Outro"]);
+
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+
+    expect(reread.sections?.map((section) => section.heading)).toEqual([
+      "Intro",
+      "Body",
+      "Outro",
+    ]);
+  });
+
+  it("edits a row in place, keeping its id", async () => {
+    // The point of the whole thing. Delete-and-recreate would give the row a
+    // new id on every save, and anything pointing at it would be broken.
+    const post = await aPostWithSections(["Intro", "Body"]);
+    const before = await sectionsOf(post.id);
+
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: [
+          { id: before[0]?.id, heading: "Introduction" },
+          { id: before[1]?.id, heading: "Body" },
+        ],
+      },
+    });
+
+    const after = await sectionsOf(post.id);
+    expect(after.map((row) => row.id)).toEqual(before.map((row) => row.id));
+    expect(after[0]?.heading).toBe("Introduction");
+  });
+
+  it("deletes exactly the row the editor removed", async () => {
+    const post = await aPostWithSections(["Intro", "Body", "Outro"]);
+    const before = await sectionsOf(post.id);
+
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: [
+          { id: before[0]?.id, heading: "Intro" },
+          { id: before[2]?.id, heading: "Outro" },
+        ],
+      },
+    });
+
+    // `post_sections.postId` is NOT NULL, so this can only have been a delete.
+    // A `relationship` would have tried to write NULL and the database would
+    // have refused, which is why that combination is a startup error.
+    const after = await sectionsOf(post.id);
+    expect(after.map((row) => row.id)).toEqual([before[0]?.id, before[2]?.id]);
+  });
+
+  it("adds a row without touching the ones already there", async () => {
+    const post = await aPostWithSections(["Intro"]);
+    const before = await sectionsOf(post.id);
+
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: [{ id: before[0]?.id, heading: "Intro" }, { heading: "Body" }],
+      },
+    });
+
+    const after = await sectionsOf(post.id);
+    expect(after).toHaveLength(2);
+    expect(after[0]?.id).toBe(before[0]?.id);
+    // Payload fills a new row's `id` in before the adapter sees it, with a
+    // client-side ObjectId that matches nothing. The row has to come back with
+    // the cuid the database generated instead.
+    expect(after[1]?.id).not.toMatch(/^[0-9a-f]{24}$/);
+  });
+
+  it("follows the array's order when the editor reorders rows", async () => {
+    const post = await aPostWithSections(["Intro", "Body"]);
+    const before = await sectionsOf(post.id);
+
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: [
+          { id: before[1]?.id, heading: "Body" },
+          { id: before[0]?.id, heading: "Intro" },
+        ],
+      },
+    });
+
+    expect(await sectionsOf(post.id)).toMatchObject([
+      { id: before[1]?.id, order: 0 },
+      { id: before[0]?.id, order: 1 },
+    ]);
+  });
+
+  it("deletes every row when the array is emptied", async () => {
+    const post = await aPostWithSections(["Intro", "Body"]);
+
+    await payload.update({ collection: "posts", id: post.id, data: { sections: [] } });
+
+    expect(await sectionsOf(post.id)).toHaveLength(0);
+  });
+
+  it("leaves the rows alone on an update that does not mention them", async () => {
+    const post = await aPostWithSections(["Intro"]);
+
+    await payload.update({ collection: "posts", id: post.id, data: { title: "Renamed" } });
+
+    expect(await sectionsOf(post.id)).toHaveLength(1);
+  });
+
+  it("cascades the rows away with the post", async () => {
+    const post = await aPostWithSections(["Intro", "Body"]);
+
+    await payload.delete({ collection: "posts", id: post.id });
+
+    // `onDelete: Cascade` in schema.prisma, not the adapter. Referential
+    // integrity stays the schema's.
+    expect(await sectionsOf(post.id)).toHaveLength(0);
+  });
+});
+
+describe("an array inside an array", () => {
+  /** The rows in `post_sections` for one post. */
+  async function sectionsOf(postId: string) {
+    const { rows } = await sql.query<{ id: string; heading: string }>(
+      'SELECT id, heading FROM post_sections WHERE "postId" = $1 ORDER BY "order"',
+      [postId],
+    );
+    return rows;
+  }
+
+  /** The rows in `section_links` for one section. */
+  async function linksOf(sectionId: string) {
+    const { rows } = await sql.query<{ id: string; label: string; order: number }>(
+      'SELECT id, label, "order" FROM section_links WHERE "sectionId" = $1 ORDER BY "order"',
+      [sectionId],
+    );
+    return rows;
+  }
+
+  /** A post with two sections, the first carrying two links. */
+  async function aPostWithLinks() {
+    const author = await anAuthor("Links");
+    return aPost({
+      author: author.id,
+      sections: [
+        {
+          heading: "Intro",
+          links: [
+            { label: "Docs", url: "https://example.com/docs" },
+            { label: "Repo", url: "https://example.com/repo" },
+          ],
+        },
+        { heading: "Body", links: [{ label: "Spec", url: "https://example.com/spec" }] },
+      ],
+    });
+  }
+
+  it("writes both levels on one create", async () => {
+    const post = await aPostWithLinks();
+    const sections = await sectionsOf(post.id);
+
+    expect(sections).toHaveLength(2);
+    expect((await linksOf(sections[0]?.id ?? "")).map((link) => link.label)).toEqual([
+      "Docs",
+      "Repo",
+    ]);
+    expect((await linksOf(sections[1]?.id ?? "")).map((link) => link.label)).toEqual(["Spec"]);
+  });
+
+  it("reads the whole tree back on the post's own query", async () => {
+    const post = await aPostWithLinks();
+
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+
+    expect(reread.sections?.[0]?.links?.map((link) => link.label)).toEqual(["Docs", "Repo"]);
+    expect(reread.sections?.[1]?.links?.map((link) => link.label)).toEqual(["Spec"]);
+  });
+
+  it("edits a grandchild in place, keeping every id", async () => {
+    const post = await aPostWithLinks();
+    const before = await sectionsOf(post.id);
+    const links = await linksOf(before[0]?.id ?? "");
+
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: (reread.sections ?? []).map((section, index) =>
+          index === 0
+            ? {
+                ...section,
+                links: (section.links ?? []).map((link, inner) =>
+                  inner === 0 ? { ...link, label: "Documentation" } : link,
+                ),
+              }
+            : section,
+        ),
+      },
+    });
+
+    const after = await linksOf(before[0]?.id ?? "");
+    expect(after.map((link) => link.id)).toEqual(links.map((link) => link.id));
+    expect(after[0]?.label).toBe("Documentation");
+  });
+
+  it("scopes an id to the section it is inside", async () => {
+    // The reason `existing` is a tree rather than a flat set. `Docs` belongs to
+    // the first section; sending its id under the SECOND has to read as a new
+    // link there, not as an edit Prisma would refuse.
+    const post = await aPostWithLinks();
+    const sections = await sectionsOf(post.id);
+    const docs = (await linksOf(sections[0]?.id ?? ""))[0];
+
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: (reread.sections ?? []).map((section, index) =>
+          index === 1
+            ? { ...section, links: [{ id: docs?.id, label: "Docs", url: "https://x.test" }] }
+            : section,
+        ),
+      },
+    });
+
+    // The original is still the first section's, and the second section got a
+    // brand new row rather than stealing it.
+    expect((await linksOf(sections[0]?.id ?? "")).map((link) => link.id)).toContain(docs?.id);
+    const moved = await linksOf(sections[1]?.id ?? "");
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.id).not.toBe(docs?.id);
+  });
+
+  it("creates the grandchildren of a brand new section", async () => {
+    const post = await aPostWithLinks();
+
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: [
+          ...(reread.sections ?? []),
+          { heading: "Outro", links: [{ label: "Next", url: "https://example.com/next" }] },
+        ],
+      },
+    });
+
+    const sections = await sectionsOf(post.id);
+    expect(sections).toHaveLength(3);
+    expect((await linksOf(sections[2]?.id ?? "")).map((link) => link.label)).toEqual(["Next"]);
+  });
+
+  it("takes the grandchildren with a removed section", async () => {
+    const post = await aPostWithLinks();
+    const sections = await sectionsOf(post.id);
+
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: { sections: (reread.sections ?? []).slice(1) },
+    });
+
+    expect(await sectionsOf(post.id)).toHaveLength(1);
+    // `SectionLink.section` is `onDelete: Cascade`, so the links went with it.
+    expect(await linksOf(sections[0]?.id ?? "")).toHaveLength(0);
+  });
+
+  it("reorders the grandchildren from the array's order", async () => {
+    const post = await aPostWithLinks();
+    const sections = await sectionsOf(post.id);
+    const before = await linksOf(sections[0]?.id ?? "");
+
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+    await payload.update({
+      collection: "posts",
+      id: post.id,
+      data: {
+        sections: (reread.sections ?? []).map((section, index) =>
+          index === 0 ? { ...section, links: [...(section.links ?? [])].reverse() } : section,
+        ),
+      },
+    });
+
+    const after = await linksOf(sections[0]?.id ?? "");
+    expect(after.map((link) => link.id)).toEqual([before[1]?.id, before[0]?.id]);
+    expect(after.map((link) => link.order)).toEqual([0, 1]);
   });
 });
 

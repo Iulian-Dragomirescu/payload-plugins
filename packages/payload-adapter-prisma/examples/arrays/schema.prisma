@@ -1,0 +1,52 @@
+// A parent, its rows, and their rows.
+//
+// The shape a `relationship` cannot write: both foreign keys are NOT NULL, so a
+// removal has to delete the row rather than detach it.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Quiz {
+  id      String       @id @default(cuid())
+  title   String
+  options QuizOption[]
+
+  @@map("quizzes")
+}
+
+model QuizOption {
+  id      String  @id @default(cuid())
+  label   String
+  correct Boolean @default(false)
+
+  /// The array's index is written here on every save.
+  position Int
+
+  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  quizId String
+
+  hints QuizHint[]
+
+  @@index([quizId])
+  @@map("quiz_options")
+}
+
+/// A second level. `onDelete: Cascade` again, so removing an option in the admin
+/// panel takes its hints with it.
+model QuizHint {
+  id   String @id @default(cuid())
+  text String
+  rank Int
+
+  option   QuizOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  optionId String
+
+  @@index([optionId])
+  @@map("quiz_hints")
+}

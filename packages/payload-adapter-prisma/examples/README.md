@@ -9,6 +9,8 @@ from.
 | [`minimal`](./minimal) | The smallest config that works |
 | [`renamed-columns`](./renamed-columns) | A schema whose names differ from the CMS's |
 | [`relationships`](./relationships) | Two relations to one model, many-to-many, self-relation |
+| [`joins`](./joins) | A parent reading its children, paginated and sorted |
+| [`arrays`](./arrays) | A parent writing its children, nested and ordered |
 | [`globals`](./globals) | A global in your table, and one in Payload's |
 
 None of these are standalone projects. They are the interesting files, without

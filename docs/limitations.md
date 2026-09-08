@@ -52,8 +52,12 @@ non-null, that means writing NULL into a NOT NULL column, and the database
 refuses.
 
 The adapter raises this at startup rather than on the first removal. Read the
-field as a [join](./joins.md), mark it `readOnly`, or make the foreign key
-optional.
+field as a [join](./joins.md), write it as an [array](./arrays.md), mark it
+`readOnly`, or make the foreign key optional.
+
+An array is usually the right answer when the rows belong to the parent: it
+deletes a removed row instead of detaching it, so the non-null foreign key stops
+being a problem.
 
 ## A column no create can fill in
 

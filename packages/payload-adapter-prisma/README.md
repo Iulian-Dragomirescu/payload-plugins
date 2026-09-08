@@ -111,6 +111,7 @@ prismaAdapter({
 | `foreignKey` | relationship | Which foreign key the relation travels over |
 | `readOnly` | field | Read this column, never write it |
 | `orderBy` | to-many relationship | Which order its rows come back in |
+| `order` | array | Which column keeps a row's position |
 | `where` | global | Which row of the table this global is |
 
 Everything else, meaning column types, nullability, relation ownership, the
@@ -151,6 +152,26 @@ The children ride along on the parent's own read as a nested Prisma `include`, s
 a page of quizzes is one query and each quiz still gets its own page of
 questions. See [Join fields](../../docs/joins.md).
 
+## Array fields
+
+The same children, written. An `array` whose Prisma field is a relation maps onto
+that child table, at any depth:
+
+```ts
+{
+  name: "questions",
+  type: "array",
+  custom: { prisma: { order: "position" } },
+  fields: [{ name: "prompt", type: "text", required: true }],
+}
+```
+
+One save writes the parent and its rows in a single nested transaction, editing
+rows in place and deleting only the ones the editor removed. Because a removal is
+a delete rather than a detach, this works over the non-null foreign key a
+`relationship` cannot write. An array pointing at a column still stores one
+`Json` value. See [Array fields](../../docs/arrays.md).
+
 ## Globals
 
 A global is the first row of its table, by primary key. Read it, and if the table
@@ -183,6 +204,7 @@ Runnable configurations, one per shape, in [`examples/`](./examples):
 | [`renamed-columns`](./examples/renamed-columns) | A schema whose names differ from the CMS's |
 | [`relationships`](./examples/relationships) | Two relations to one model, many-to-many, self-relation |
 | [`joins`](./examples/joins) | A parent reading its children, paginated and sorted |
+| [`arrays`](./examples/arrays) | A parent writing its children, nested and ordered |
 | [`globals`](./examples/globals) | A global in your table, and one in Payload's |
 
 A full app using all of them is in [`apps/blog`](../../apps/blog).
@@ -193,8 +215,8 @@ A full app using all of them is in [`apps/blog`](../../apps/blog).
 pnpm test
 ```
 
-167 unit tests. They cover the parser, the schema loader, the mapping and its
-startup errors, query translation, the relationship write table, join
+227 unit tests. They cover the parser, the schema loader, the mapping and its
+startup errors, query translation, the relationship write table, join and array
 translation, the singleton semantics for globals, and that every example in
 [`examples/`](./examples) still resolves against its own schema. None of them
 touch a database.
@@ -213,6 +235,7 @@ pnpm --filter @repo/blog test
 * [Mapping](../../docs/mapping.md)
 * [Relationships](../../docs/relationships.md)
 * [Join fields](../../docs/joins.md)
+* [Array fields](../../docs/arrays.md)
 * [Globals](../../docs/globals.md)
 * [Queries](../../docs/queries.md)
 * [Limitations](../../docs/limitations.md)

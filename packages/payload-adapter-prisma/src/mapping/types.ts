@@ -98,6 +98,20 @@ export interface PrismaFieldMapping {
    * ```
    */
   orderBy?: PrismaOrderByInput;
+  /**
+   * The child column holding an `array` row's position.
+   *
+   * Only meaningful on an `array` whose `field` names a relation. A Payload
+   * array is ordered and a table is not, so without a column to write the
+   * index into the order is lost on the next read.
+   *
+   * @example
+   * ```ts
+   * { name: "options", type: "array", fields: [ … ],
+   *   custom: { prisma: { order: "position" } } }
+   * ```
+   */
+  order?: string;
 }
 
 /**
@@ -202,6 +216,55 @@ export interface JoinFieldMapping {
   where?: Where;
 }
 
+/**
+ * A field backed by rows in a child table.
+ *
+ * Payload's `array` is an ordered list of subdocuments. On an adapter that owns
+ * its schema it becomes a generated child table; here it maps onto a child table
+ * that already exists, which is the shape an editorial schema is full of: a quiz
+ * and its questions, a wheel and its segments.
+ *
+ * This is the one field type that WRITES a to-many. It can, where a
+ * `relationship` cannot, because a removal is a `deleteMany` rather than a
+ * `disconnect`: the row goes, nothing is set to NULL, and a non-null foreign key
+ * on the child is no obstacle.
+ *
+ * The cost is that the child rows stop being addressable on their own. They have
+ * no list view, no access control and no hooks of their own, because they are
+ * read and written as part of the parent.
+ *
+ * @see {@link ./build!buildModelMapping}, which routes an `array` here only when
+ *   its Prisma field is a relation. One naming a column keeps its `Json` value.
+ */
+export interface ArrayFieldMapping {
+  /** The Payload field's name. */
+  path: string;
+  /** The relation on THIS model reaching the child rows. */
+  prismaField: string;
+  /**
+   * The child model, mapped as though it were a collection.
+   *
+   * Its `fields` are the array's own subfields, so one row reads and writes
+   * through the same transforms a document does.
+   */
+  target: ModelMapping;
+  /**
+   * The child's foreign key back to the parent.
+   *
+   * Never written directly: Prisma's nested `create` fills it in. Recorded
+   * because a field mapping it would fight with that, and because it is what
+   * proves the child is a child rather than half of a many-to-many.
+   */
+  foreignKey: string;
+  /**
+   * The child column holding a row's position.
+   *
+   * Written from the array's index on every save, because the submitted order
+   * IS the order. Absent only when the field sets `admin.isSortable: false`.
+   */
+  orderColumn?: string;
+}
+
 /** One field's mapping. */
 export type FieldMapping = ScalarFieldMapping | RelationFieldMapping;
 
@@ -224,6 +287,14 @@ export interface ModelMapping {
   idField: DatamodelField;
   /** Field mappings by Payload field name. */
   fields: Map<string, FieldMapping>;
+  /**
+   * Array mappings by Payload field name, kept apart from {@link fields}.
+   *
+   * An array is rows rather than a column, so it is not sortable or queryable
+   * the way the others are, and `buildWhere` and `buildOrderBy` must not be able
+   * to reach it.
+   */
+  arrays: Map<string, ArrayFieldMapping>;
   /**
    * Join mappings by Payload field name, kept apart from {@link fields}.
    *

@@ -22,6 +22,7 @@ export {
   PrismaAdapterMappingError,
 } from "./mapping/build.js";
 export type {
+  ArrayFieldMapping,
   FieldMapping,
   JoinFieldMapping,
   ModelMapping,

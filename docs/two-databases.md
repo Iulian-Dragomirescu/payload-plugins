@@ -132,6 +132,21 @@ which is one line and avoids the question:
 internal: postgresAdapter({ idType: "uuid", pool: { connectionString: … } })
 ```
 
+The same disagreement runs the other way too. The internal adapter stores rows
+that point BACK at your documents: a document lock, a preference, a version. A
+Mongo internal adapter casts a relationship's value to an `ObjectId` unless the
+target collection's config declares an `id` field, and a cuid is not one, so it
+throws from inside BSON.
+
+`db.defaultIDType` cannot answer this, because there is one of it and two
+answers. The per-collection answer is an `id` field in the config, so the adapter
+declares a hidden one on every mapped collection at startup. Payload derives
+`customIDType` from the same field.
+
+Without it, editing a saved document fails while creating one works: the admin
+panel takes a lock the moment you touch the form, and a new document has no id
+yet.
+
 ### Empty tables for mapped collections
 
 The internal adapter is handed the whole config, so an adapter in push mode
