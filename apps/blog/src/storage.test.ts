@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "pg";
-import { getPayload, type File, type Payload } from "payload";
+import { createLocalReq, getPayload, type File, type Payload } from "payload";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -976,5 +976,78 @@ describe("queries", () => {
     await expect(
       payload.find({ collection: "posts", where: { nonexistent: { equals: 1 } } }),
     ).rejects.toThrow(/nonexistent/);
+  });
+});
+
+describe("an orderable collection", () => {
+  /** Calls Payload's own `/reorder` handler, as the admin panel's drag does. */
+  async function reorder(body: Record<string, unknown>) {
+    const endpoint = payload.config.endpoints.find((entry) => entry.path === "/reorder");
+    // The handler runs `access.update`, whose default wants a logged-in user.
+    const req = await createLocalReq({ user: { id: "1", collection: "admins" } as never }, payload);
+    req.json = () => Promise.resolve({ collectionSlug: "tags", orderableFieldName: "_order", ...body });
+    const response = await endpoint!.handler(req as never);
+    expect(response.status).toBe(200);
+  }
+
+  /** The tags' keys, straight from the column. */
+  async function keys(ids: (number | string)[]) {
+    const { rows } = await sql.query<{ id: number; sort_key: string | null }>(
+      "SELECT id, sort_key FROM tags WHERE id = ANY($1::int[])",
+      [ids.map(Number)],
+    );
+    return new Map(rows.map((row) => [String(row.id), row.sort_key]));
+  }
+
+  it("keys every new document after the last, in the mapped column", async () => {
+    // Payload's beforeChange hook finds the last key with `sort: "-_order"`,
+    // `where: { _order: { exists: true } }` and `select: { _order: true }`.
+    const suffix = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    const one = await payload.create({ collection: "tags", data: { label: `o1-${suffix}` } });
+    const two = await payload.create({ collection: "tags", data: { label: `o2-${suffix}` } });
+
+    const stored = await keys([one.id, two.id]);
+    const [first, second] = [stored.get(String(one.id)), stored.get(String(two.id))];
+    expect(typeof first).toBe("string");
+    expect(first! < second!).toBe(true);
+    expect((one as { _order?: string })._order).toBe(first);
+  });
+
+  it("moves a document through the reorder endpoint", async () => {
+    const suffix = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    const one = await payload.create({ collection: "tags", data: { label: `r1-${suffix}` } });
+    const two = await payload.create({ collection: "tags", data: { label: `r2-${suffix}` } });
+    const three = await payload.create({ collection: "tags", data: { label: `r3-${suffix}` } });
+    const ids = [one.id, two.id, three.id];
+
+    // Drag `three` above `one`.
+    await reorder({
+      docsToMove: [three.id],
+      newKeyWillBe: "less",
+      target: { id: one.id, key: (await keys(ids)).get(String(one.id)) },
+    });
+
+    const listed = await payload.find({
+      collection: "tags",
+      sort: "_order",
+      where: { id: { in: ids } },
+    });
+    expect(listed.docs.map((doc) => doc.id)).toEqual([three.id, one.id, two.id]);
+  });
+
+  it("keys the rows that predate `orderable` on the first reorder", async () => {
+    // A table that existed before the column has NULLs, and the endpoint's
+    // one-time migration finds them with `exists: false` and writes each.
+    const suffix = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    const { rows } = await sql.query<{ id: number }>(
+      "INSERT INTO tags (label) VALUES ($1), ($2) RETURNING id",
+      [`legacy1-${suffix}`, `legacy2-${suffix}`],
+    );
+    const ids = rows.map((row) => row.id);
+
+    await reorder({ docsToMove: [String(ids[0])], newKeyWillBe: "greater", target: { id: String(ids[1]) } });
+
+    const stored = await keys(ids);
+    expect([...stored.values()].every((key) => typeof key === "string")).toBe(true);
   });
 });

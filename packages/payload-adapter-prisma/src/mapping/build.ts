@@ -58,12 +58,15 @@ function label(kind: Kind): string {
  * @param props.slug - The config's slug, for errors.
  * @param props.kind - Whether it is a collection or a global.
  * @param props.custom - The config's `custom` object.
+ * @param props.flattenedFields - The sanitized config's fields, which every
+ *   `fields` key must name.
  * @returns The mapping, or `undefined` when it is not Prisma-backed.
  */
 export function readAdapterMapping(props: {
   slug: string;
   kind: Kind;
   custom: unknown;
+  flattenedFields: FlattenedField[];
 }): PrismaGlobalMapping | undefined {
   const custom = props.custom as { prisma?: unknown } | undefined;
   const mapping = custom?.prisma;
@@ -81,6 +84,35 @@ export function readAdapterMapping(props: {
         `Name the Prisma model it maps onto: \`custom: { prisma: { model: "MyModel" } }\`.`,
     );
   }
+
+  const renames = (mapping as { fields?: unknown }).fields;
+  if (renames !== undefined) {
+    if (
+      typeof renames !== "object" ||
+      renames === null ||
+      Array.isArray(renames) ||
+      Object.values(renames).some((column) => typeof column !== "string" || column.length === 0)
+    ) {
+      throw new PrismaAdapterMappingError(
+        `${label(props.kind)} "${props.slug}" has a \`custom.prisma.fields\` that is not an ` +
+          `object of field path to column name. It should look like ` +
+          `\`fields: { _order: "order" }\`.`,
+      );
+    }
+    const paths = props.flattenedFields
+      .map((field) => (field as { name?: string }).name)
+      .filter((name): name is string => typeof name === "string");
+    for (const path of Object.keys(renames)) {
+      if (!paths.includes(path)) {
+        throw new PrismaAdapterMappingError(
+          `${label(props.kind)} "${props.slug}" sets \`custom.prisma.fields.${path}\`, but ` +
+            `"${path}" is not a top-level field on it.\nFields: ${nameList(paths)}.\n` +
+            `A nested field takes \`custom: { prisma: { field: "…" } }\` on the field itself.`,
+        );
+      }
+    }
+  }
+
   return mapping as PrismaGlobalMapping;
 }
 
@@ -98,6 +130,7 @@ export function readCollectionMapping(props: {
     slug: props.collection.slug,
     kind: "collection",
     custom: props.collection.custom,
+    flattenedFields: props.collection.flattenedFields,
   });
 }
 
@@ -115,6 +148,7 @@ export function readGlobalMapping(props: {
     slug: props.global.slug,
     kind: "global",
     custom: props.global.custom,
+    flattenedFields: props.global.flattenedFields,
   });
 }
 
@@ -125,6 +159,27 @@ function readFieldMapping(field: FlattenedField): PrismaFieldMapping {
   if (mapping === undefined || mapping === null) return {};
   if (typeof mapping !== "object") return {};
   return mapping as PrismaFieldMapping;
+}
+
+/**
+ * Folds the collection-level `fields` rename into a field's own mapping.
+ *
+ * Done once, before anything reads the field, so the scalar, relation and array
+ * paths all resolve it the same way. The field's own `custom.prisma.field` wins.
+ */
+function withRename(props: {
+  field: FlattenedField;
+  renames: Record<string, string> | undefined;
+}): FlattenedField {
+  const { field, renames } = props;
+  const name = (field as { name?: string }).name;
+  if (renames === undefined || name === undefined || !Object.hasOwn(renames, name)) return field;
+  const column = renames[name] as string;
+  const custom = (field as { custom?: Record<string, unknown> }).custom;
+  return {
+    ...field,
+    custom: { ...custom, prisma: { field: column, ...readFieldMapping(field) } },
+  } as FlattenedField;
 }
 
 /**
@@ -462,8 +517,13 @@ function buildScalarMapping(props: {
     throw new PrismaAdapterMappingError(
       `${label(kind)} "${slug}" field "${path}" maps to "${model.name}.${target}", which does not ` +
         `exist.\nFields on "${model.name}": ${nameList(scalars)}.\n` +
-        `Set \`custom: { prisma: { field: "…" } }\` on the field, or add the column to ` +
-        `your schema.`,
+        // A leading underscore is not a legal Prisma field name, so this is a
+        // field Payload added (`orderable`'s `_order`), with no config to edit.
+        (name.startsWith("_")
+          ? `Payload adds "${name}" itself, so name its column on the ${kind}: ` +
+            `\`custom: { prisma: { model: "${model.name}", fields: { ${name}: "…" } } }\`.`
+          : `Set \`custom: { prisma: { field: "…" } }\` on the field, or add the column to ` +
+            `your schema.`),
     );
   }
 
@@ -531,7 +591,7 @@ export function buildModelMapping(props: {
 }): ModelMapping {
   const { slug, kind, custom, flattenedFields, datamodel } = props;
 
-  const declared = readAdapterMapping({ slug, kind, custom });
+  const declared = readAdapterMapping({ slug, kind, custom, flattenedFields });
   if (declared === undefined) {
     throw new PrismaAdapterMappingError(
       `${label(kind)} "${slug}" has no \`custom.prisma\`, so it is not Prisma-backed.`,
@@ -570,7 +630,7 @@ export function buildModelMapping(props: {
   }
 
   const { arrays, fields, includes } = buildFields({
-    flattenedFields,
+    flattenedFields: flattenedFields.map((field) => withRename({ field, renames: declared.fields })),
     model,
     datamodel,
     idField,

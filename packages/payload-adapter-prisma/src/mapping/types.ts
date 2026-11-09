@@ -34,6 +34,20 @@ export interface PrismaModelMapping {
    * surrogate key alongside a `@unique` business key, say.
    */
   id?: string;
+  /**
+   * Columns for top-level fields the config does not declare itself, by path.
+   *
+   * Payload adds some fields during sanitization, after the config is written,
+   * so there is nowhere to put a field-level `custom.prisma.field`. `orderable`
+   * is the one that needs it: its `_order` is not a legal Prisma field name. A
+   * field's own `custom.prisma.field` still wins.
+   *
+   * @example
+   * ```ts
+   * custom: { prisma: { model: "QuizCategory", fields: { _order: "order" } } }
+   * ```
+   */
+  fields?: Record<string, string>;
 }
 
 /**

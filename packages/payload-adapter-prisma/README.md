@@ -107,6 +107,7 @@ prismaAdapter({
 | Key | Where | What it says |
 | --- | --- | --- |
 | `model` | collection, global | Which Prisma model backs it, and what opts it in |
+| `fields` | collection, global | Which column backs a top-level field the config does not declare itself, by path |
 | `field` | field | Which column backs this field |
 | `foreignKey` | relationship | Which foreign key the relation travels over |
 | `readOnly` | field | Read this column, never write it |
@@ -117,6 +118,19 @@ prismaAdapter({
 Everything else, meaning column types, nullability, relation ownership, the
 primary key, `@updatedAt`, is read from the schema rather than restated in the
 config. The two cannot drift, because only one of them says it.
+
+`fields` exists for `orderable`. Payload adds the order field during
+sanitization, after your config is written, and calls it `_order`, or
+`_<slug>_<join>_order` for an orderable join. No Prisma field can start with an
+underscore, so name the column on the collection that holds the field, which for
+a join is the child. A nullable `String` holds the
+key, and Payload fills it in on the first reorder:
+
+```ts
+custom: { prisma: { model: "QuizCategory", fields: { _order: "order" } } }
+```
+
+A field's own `custom.prisma.field` takes precedence over `fields`.
 
 ## Relationship writes
 

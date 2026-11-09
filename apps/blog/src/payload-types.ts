@@ -224,6 +224,7 @@ export interface Organization {
  */
 export interface Tag {
   id: string;
+  _order?: string | null;
   label: string;
 }
 /**
@@ -456,6 +457,7 @@ export interface AuthorsSelect<T extends boolean = true> {
  * via the `definition` "tags_select".
  */
 export interface TagsSelect<T extends boolean = true> {
+  _order?: T;
   label?: T;
 }
 /**

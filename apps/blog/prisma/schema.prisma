@@ -133,8 +133,10 @@ model Author {
 }
 
 model Tag {
-  id    Int    @id @default(autoincrement())
-  label String @unique
+  id      Int     @id @default(autoincrement())
+  label   String  @unique
+  /// Payload's `orderable` key. Nullable: Payload fills it in on first reorder.
+  sortKey String? @map("sort_key")
 
   posts BlogPost[] @relation("PostToTag")
 

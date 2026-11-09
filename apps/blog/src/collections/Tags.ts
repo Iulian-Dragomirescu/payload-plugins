@@ -5,10 +5,14 @@ import type { CollectionConfig } from "payload";
  *
  * Ids are strings above the adapter whatever the column type, so these come
  * back as `"1"`, `"2"` and are coerced on the way into the database.
+ *
+ * `orderable` adds an `_order` field during sanitization, a name no Prisma field
+ * can have, so its column is named here rather than on the field.
  */
 export const Tags: CollectionConfig = {
   slug: "tags",
-  custom: { prisma: { model: "Tag" } },
+  orderable: true,
+  custom: { prisma: { model: "Tag", fields: { _order: "sortKey" } } },
   timestamps: false,
   admin: { useAsTitle: "label" },
   fields: [{ name: "label", type: "text", required: true, unique: true }],
