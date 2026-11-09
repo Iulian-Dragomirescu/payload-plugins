@@ -77,6 +77,17 @@ export const Posts: CollectionConfig = {
       admin: { description: "Many-to-many. Tag ids are Ints in the database." },
     },
     {
+      name: "coverImage",
+      type: "upload",
+      relationTo: "media",
+      // The adapter maps an `upload` exactly as it maps a `relationship`, so
+      // this needs a real Prisma relation and follows the same rules. It also
+      // means both sides have to be mapped: an upload collection left in the
+      // internal database has no foreign key a mapped post could hold.
+      custom: { prisma: { field: "coverImage", foreignKey: "coverImageId" } },
+      admin: { position: "sidebar" },
+    },
+    {
       name: "parent",
       type: "relationship",
       relationTo: "posts",

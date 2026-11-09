@@ -374,7 +374,8 @@ export function prismaAdapter(args: PrismaAdapterArgs): DatabaseAdapterObj {
       const overrides: Record<string, unknown> = {
         defaultIDType: ADAPTER_ID_TYPE,
         name: "prisma",
-        packageName: "payload-adapter-prisma",
+        // No `packageName`: migrations belong to the internal adapter, and its
+        // `migrate:create` writes `import { sql } from '<packageName>'`.
         payload,
         // Returning null is how a Payload adapter says it has no transactions.
         // See `transactions` above for why that is the default.

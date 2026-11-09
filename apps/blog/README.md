@@ -83,6 +83,7 @@ second database. The split is the same, the internal side just uses tables.
 | [`src/collections/Posts.ts`](src/collections/Posts.ts) | Every mapping key, each one earning its place. |
 | [`src/collections/People.ts`](src/collections/People.ts) | Your `users` table, mapped. |
 | [`src/collections/Admins.ts`](src/collections/Admins.ts) | Payload's logins, unmapped, so internal. |
+| [`src/collections/Media.ts`](src/collections/Media.ts) | An upload collection, mapped: files on disk, rows in Postgres. |
 | [`src/globals/SiteSettings.ts`](src/globals/SiteSettings.ts) | A global stored as one row of your own table. |
 | [`src/globals/EditorialSettings.ts`](src/globals/EditorialSettings.ts) | The same thing with no table at all. |
 | [`src/seed.ts`](src/seed.ts) | A narrated tour: create, relate, update, and where each write lands. |

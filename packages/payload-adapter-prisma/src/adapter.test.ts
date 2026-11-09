@@ -266,3 +266,15 @@ describe("what the internal adapter is shown", () => {
     expect(kept?.config.collections.map((entry) => entry.slug)).toEqual(["admins"]);
   });
 });
+
+describe("migrations", () => {
+  it("keeps the internal adapter's packageName, because a generated migration imports from it", () => {
+    const db = prismaAdapter({
+      prisma: {},
+      internal: internalAdapter("text"),
+      schema: { datamodel },
+    }).init({ payload: payloadWith({ slugs: [{ mapped: true, slug: "posts" }] }) });
+
+    expect(db.packageName).toBe("internal");
+  });
+});

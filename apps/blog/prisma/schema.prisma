@@ -61,6 +61,11 @@ model BlogPost {
   /// Rows this post OWNS, edited from the post's own form as an `array`.
   sections PostSection[]
 
+  /// An `upload` field is a `relationship` as far as the adapter is concerned,
+  /// so it travels over an ordinary foreign key like any other to-one.
+  coverImage   MediaAsset? @relation(fields: [coverImageId], references: [id])
+  coverImageId String?
+
   @@index([authorId])
   @@index([publishedAt])
   @@map("blog_posts")
@@ -143,6 +148,43 @@ model Organization {
   members Author[]
 
   @@map("organizations")
+}
+
+/// An UPLOAD collection's table.
+///
+/// Payload injects its own fields into any collection with `upload`, and none of
+/// them is virtual, so each one needs a column here. The adapter writes no DDL,
+/// which makes that list yours: it is the price of keeping a media library in
+/// your schema instead of the internal database.
+///
+/// The files themselves never touch this table. They go to `upload.staticDir` on
+/// disk, or to whatever a storage plugin does instead.
+model MediaAsset {
+  id  String  @id @default(cuid())
+  alt String?
+
+  url          String?
+  thumbnailURL String?
+  /// Unique because Payload looks for filename collisions with a query rather
+  /// than a constraint, and two rows agreeing here means one file on disk.
+  filename     String? @unique
+  mimeType     String?
+  filesize     Int?
+  width        Int?
+  height       Int?
+  /// A focal point is a percentage, and Payload sends it fractional.
+  focalX       Float?
+  focalY       Float?
+  /// `imageSizes` becomes a `group`, and a group is one value: every generated
+  /// size lives in this one column.
+  sizes        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  coverFor BlogPost[]
+
+  @@map("media_assets")
 }
 
 /// A GLOBAL's table.

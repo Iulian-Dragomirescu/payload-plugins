@@ -15,6 +15,10 @@ dist/
 # has them typechecks and builds before anyone runs a generator.
 apps/blog/src/generated/
 
+# Whatever was uploaded to the `media` collection. Local state, like the
+# contents of the databases the compose file starts.
+apps/blog/media/
+
 # Per-machine agent permissions, never shared.
 .claude/settings.local.json
 .claude/worktrees/

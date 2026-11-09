@@ -72,6 +72,7 @@ export interface Config {
     tags: Tag;
     organizations: Organization;
     people: Person;
+    media: Media;
     admins: Admin;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
@@ -89,6 +90,7 @@ export interface Config {
     tags: TagsSelect<false> | TagsSelect<true>;
     organizations: OrganizationsSelect<false> | OrganizationsSelect<true>;
     people: PeopleSelect<false> | PeopleSelect<true>;
+    media: MediaSelect<false> | MediaSelect<true>;
     admins: AdminsSelect<false> | AdminsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
@@ -158,6 +160,7 @@ export interface Post {
    * Many-to-many. Tag ids are Ints in the database.
    */
   tags?: (string | Tag)[] | null;
+  coverImage?: (string | null) | Media;
   parent?: (string | null) | Post;
   /**
    * Rows in post_sections. Editing one keeps its id; removing one deletes the row.
@@ -222,6 +225,45 @@ export interface Organization {
 export interface Tag {
   id: string;
   label: string;
+}
+/**
+ * Mapped onto the MediaAsset model. The files live under apps/blog/media.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "media".
+ */
+export interface Media {
+  id: string;
+  alt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  url?: string | null;
+  thumbnailURL?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  filesize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  focalX?: number | null;
+  focalY?: number | null;
+  sizes?: {
+    thumbnail?: {
+      url?: string | null;
+      width?: number | null;
+      height?: number | null;
+      mimeType?: string | null;
+      filesize?: number | null;
+      filename?: string | null;
+    };
+    card?: {
+      url?: string | null;
+      width?: number | null;
+      height?: number | null;
+      mimeType?: string | null;
+      filesize?: number | null;
+      filename?: string | null;
+    };
+  };
 }
 /**
  * The `users` table from schema.prisma — your data, not Payload's logins.
@@ -309,6 +351,10 @@ export interface PayloadLockedDocument {
         value: string | Person;
       } | null)
     | ({
+        relationTo: 'media';
+        value: string | Media;
+      } | null)
+    | ({
         relationTo: 'admins';
         value: string | Admin;
       } | null);
@@ -368,6 +414,7 @@ export interface PostsSelect<T extends boolean = true> {
   author?: T;
   reviewer?: T;
   tags?: T;
+  coverImage?: T;
   parent?: T;
   sections?:
     | T
@@ -427,6 +474,48 @@ export interface PeopleSelect<T extends boolean = true> {
   name?: T;
   email?: T;
   roles?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "media_select".
+ */
+export interface MediaSelect<T extends boolean = true> {
+  alt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  url?: T;
+  thumbnailURL?: T;
+  filename?: T;
+  mimeType?: T;
+  filesize?: T;
+  width?: T;
+  height?: T;
+  focalX?: T;
+  focalY?: T;
+  sizes?:
+    | T
+    | {
+        thumbnail?:
+          | T
+          | {
+              url?: T;
+              width?: T;
+              height?: T;
+              mimeType?: T;
+              filesize?: T;
+              filename?: T;
+            };
+        card?:
+          | T
+          | {
+              url?: T;
+              width?: T;
+              height?: T;
+              mimeType?: T;
+              filesize?: T;
+              filename?: T;
+            };
+      };
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

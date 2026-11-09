@@ -35,6 +35,7 @@
     "pg": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "sharp": "catalog:",
     "@payloadcms/plugin-seo": "catalog:"
   },
   "devDependencies": {

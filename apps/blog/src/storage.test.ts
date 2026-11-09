@@ -1,7 +1,12 @@
 import "dotenv/config";
 
+import { access } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { Client } from "pg";
-import { getPayload, type Payload } from "payload";
+import { getPayload, type File, type Payload } from "payload";
+import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { describeStorage } from "payload-adapter-prisma";
@@ -29,6 +34,7 @@ const SCHEMA_TABLES = [
   "_PostToTag",
   "authors",
   "blog_posts",
+  "media_assets",
   "organizations",
   "post_sections",
   "section_links",
@@ -93,6 +99,7 @@ describe("the two databases", () => {
       "tags",
       "organizations",
       "people",
+      "media",
       "global:siteSettings",
     ]);
     // Payload's own collections were never listed anywhere. They are internal
@@ -807,6 +814,92 @@ describe("plugins", () => {
 
     const reread = await payload.findByID({ collection: "posts", id: post.id });
     expect((reread as unknown as { meta: { title: string } }).meta.title).toBe("Optimised");
+  });
+});
+
+describe("an upload collection", () => {
+  const mediaDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../media");
+
+  /** A real PNG, because Payload puts it through sharp to make the sizes. */
+  async function anImage(label: string): Promise<File> {
+    const data = await sharp({
+      create: { width: 1200, height: 900, channels: 3, background: "#4b6cb7" },
+    })
+      .png()
+      .toBuffer();
+    return {
+      data,
+      mimetype: "image/png",
+      name: `${label}-${Date.now()}-${Math.round(Math.random() * 1e6)}.png`,
+      size: data.byteLength,
+    };
+  }
+
+  /** Uploads one image to the `media` collection. */
+  async function anUpload(label: string) {
+    return payload.create({
+      collection: "media",
+      data: { alt: label },
+      file: await anImage(label),
+    });
+  }
+
+  it("writes Payload's own upload fields into your columns", async () => {
+    const media = await anUpload("plain");
+
+    const { rows } = await sql.query<{
+      filename: string;
+      filesize: number;
+      height: number;
+      mimeType: string;
+      width: number;
+    }>('SELECT filename, "mimeType", filesize, width, height FROM media_assets WHERE id = $1', [
+      media.id,
+    ]);
+
+    expect(rows[0]).toMatchObject({
+      filename: media.filename,
+      height: 900,
+      mimeType: "image/png",
+      width: 1200,
+    });
+    expect(rows[0]?.filesize).toBeGreaterThan(0);
+  });
+
+  it("keeps every generated size in the one `sizes` column", async () => {
+    const media = await anUpload("sized");
+
+    const { rows } = await sql.query<{
+      sizes: Record<string, { filename: string; height: number; width: number }>;
+    }>("SELECT sizes FROM media_assets WHERE id = $1", [media.id]);
+
+    // A `group` is one value, so both sizes are in one `Json` column rather
+    // than in columns or a table of their own.
+    expect(rows[0]?.sizes.thumbnail).toMatchObject({ height: 300, width: 400 });
+    expect(rows[0]?.sizes.card).toMatchObject({ height: 1024, width: 768 });
+
+    // The files are on disk, which no adapter has anything to do with.
+    for (const size of Object.values(rows[0]?.sizes ?? {})) {
+      await expect(access(path.join(mediaDir, size.filename))).resolves.toBeUndefined();
+    }
+    await expect(access(path.join(mediaDir, media.filename ?? ""))).resolves.toBeUndefined();
+  });
+
+  it("maps an `upload` field over an ordinary foreign key", async () => {
+    const media = await anUpload("cover");
+    const author = await anAuthor("Illustrated");
+    const post = await aPost({ author: author.id, coverImage: media.id });
+
+    const { rows } = await sql.query<{ coverImageId: string }>(
+      'SELECT "coverImageId" FROM blog_posts WHERE id = $1',
+      [post.id],
+    );
+    expect(rows[0]?.coverImageId).toBe(media.id);
+
+    // Payload populates the field on the way back out, the same as it does a
+    // `relationship`.
+    const reread = await payload.findByID({ collection: "posts", id: post.id });
+    expect((reread.coverImage as { filename: string }).filename).toBe(media.filename);
   });
 });
 

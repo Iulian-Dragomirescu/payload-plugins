@@ -6,9 +6,11 @@ import { seoPlugin } from "@payloadcms/plugin-seo";
 import { lexicalEditor } from "@payloadcms/richtext-lexical";
 import { prismaAdapter } from "payload-adapter-prisma";
 import { buildConfig } from "payload";
+import sharp from "sharp";
 
 import { Admins } from "./collections/Admins";
 import { Authors } from "./collections/Authors";
+import { Media } from "./collections/Media";
 import { Organizations } from "./collections/Organizations";
 import { People } from "./collections/People";
 import { Posts } from "./collections/Posts";
@@ -44,13 +46,17 @@ export default buildConfig({
     },
   },
 
-  collections: [Posts, Authors, Tags, Organizations, People, Admins],
+  collections: [Posts, Authors, Tags, Organizations, People, Media, Admins],
   // One global in each database. The only difference between them is whether
   // the config names a Prisma model.
   globals: [SiteSettings, EditorialSettings],
 
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET ?? "prisma-example-development-secret",
+
+  // Without it Payload does no image processing, so `media`'s `imageSizes`
+  // would generate nothing and its `sizes` column would stay empty.
+  sharp,
 
   // A plugin that adds fields to a mapped collection needs columns for them,
   // and adding those is yours to do: `meta` is a group, so it is the one
