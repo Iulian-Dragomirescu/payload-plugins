@@ -57,7 +57,10 @@ jobs:
           --health-timeout 5s
           --health-retries 20
       mongo:
-        image: mongo:8
+        # Not 8: every 8.x release exits at startup, or crashes a minute in, on
+        # kernels 6.19 to 7.0.13, which is what the runners are on. 7.0 is fine
+        # on all of them. https://jira.mongodb.org/browse/SERVER-125742
+        image: mongo:7
         env:
           MONGO_INITDB_ROOT_USERNAME: payload
           MONGO_INITDB_ROOT_PASSWORD: payload
