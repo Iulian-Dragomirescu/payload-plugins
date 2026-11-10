@@ -246,6 +246,41 @@ function relationCondition(props: {
   }
 }
 
+/** Operators whose answer for a value that is never stored is "every row", not "no row". */
+const MATCHES_ABSENT = new Set<string>(["exists", "not_equals", "not_in", "not_like"]);
+
+/**
+ * Builds the filter for a `virtual: true` field, which has no stored value.
+ *
+ * A positive comparison can match no row. The negative ones would match every
+ * row, and a filter that widens silently is a leak in an access-control
+ * `where`, so those still raise.
+ *
+ * @param props - Input props.
+ * @param props.path - The Payload field path, possibly dotted.
+ * @param props.condition - The operator/value pairs for that path.
+ * @param props.mapping - The collection's mapping.
+ * @returns A Prisma `where` fragment that matches nothing.
+ */
+function virtualCondition(props: {
+  path: string;
+  condition: WhereField;
+  mapping: ModelMapping;
+}): PrismaWhere {
+  const { path, condition, mapping } = props;
+
+  for (const [operator, value] of Object.entries(condition)) {
+    if (MATCHES_ABSENT.has(operator) || (operator === "equals" && value === null)) {
+      throw new PrismaAdapterQueryError(
+        `Cannot query "${path}" with "${operator}" on collection "${mapping.slug}": the field ` +
+          `is virtual, so it has no stored value and this would match every row.`,
+      );
+    }
+  }
+
+  return { [mapping.idField.name]: { in: [] } };
+}
+
 /**
  * Builds the filter for one `path: { operator: value }` entry.
  *
@@ -269,6 +304,9 @@ function pathCondition(props: {
   if (head === undefined) return {};
 
   const field = mapping.fields.get(head);
+  if (field === undefined && mapping.virtuals.has(head)) {
+    return virtualCondition({ path, condition, mapping });
+  }
   if (field === undefined) {
     throw new PrismaAdapterQueryError(
       `Cannot query "${path}" on collection "${mapping.slug}": "${head}" is not a field that ` +

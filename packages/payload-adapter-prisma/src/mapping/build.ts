@@ -648,6 +648,11 @@ export function buildModelMapping(props: {
     fields,
     arrays,
     joins: new Map(),
+    virtuals: new Set(
+      flattenedFields
+        .filter((field) => (field as { virtual?: boolean | string }).virtual === true)
+        .map((field) => (field as { name: string }).name),
+    ),
     includes,
     uncreatable: findUncreatableColumns({
       model,
@@ -991,6 +996,7 @@ function buildArrayMapping(props: {
       fields,
       arrays,
       joins: new Map(),
+      virtuals: new Set(),
       includes,
       uncreatable: [],
     },

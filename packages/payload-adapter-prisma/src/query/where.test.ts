@@ -64,6 +64,7 @@ const posts = mappingFor({
     { name: "publishedAt", type: "date" },
     { name: "author", type: "relationship", relationTo: "authors" },
     { name: "tags", type: "relationship", relationTo: "tags", hasMany: true },
+    { name: "original", type: "group", virtual: true, flattenedFields: [] },
   ],
 });
 
@@ -80,6 +81,21 @@ const byModel = new Map([
 
 const where = (input: Parameters<typeof buildWhere>[0]["where"]) =>
   buildWhere({ where: input, mapping: posts, byModel });
+
+describe("buildWhere — virtual fields", () => {
+  it("matches no row, since nothing is stored", () => {
+    expect(where({ "original.filename": { equals: "a.png" } })).toEqual({ id: { in: [] } });
+    expect(
+      where({ or: [{ title: { equals: "a" } }, { "original.filename": { equals: "a" } }] }),
+    ).toEqual({ OR: [{ title: { equals: "a" } }, { id: { in: [] } }] });
+  });
+
+  it("raises on a comparison that would match every row", () => {
+    expect(() => where({ original: { exists: false } })).toThrow(/virtual/);
+    expect(() => where({ "original.filename": { not_equals: "a" } })).toThrow(/virtual/);
+    expect(() => where({ original: { equals: null } })).toThrow(/virtual/);
+  });
+});
 
 describe("buildWhere — scalars", () => {
   it("translates the comparison operators", () => {

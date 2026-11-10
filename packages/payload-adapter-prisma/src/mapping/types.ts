@@ -318,6 +318,14 @@ export interface ModelMapping {
    */
   joins: Map<string, JoinFieldMapping>;
   /**
+   * Names of `virtual: true` fields: hook-populated, never a column.
+   *
+   * They have no stored value, so a filter on one is answered rather than
+   * raised. Payload 4 queries `original.filename` on every upload collection,
+   * whether or not the collection stores an original.
+   */
+  virtuals: Set<string>;
+  /**
    * Relation mappings that must be `include`d to be read back.
    *
    * A to-one relation this model owns comes off its foreign-key column and
